@@ -11,19 +11,37 @@ const tintColorDark = '#fff';
 export const Colors = {
   light: {
     text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
+    background: '#F8F9FA', // Fresh Soft Grey Background
+    tint: '#1D4289', // Metamedia Navy
     icon: '#687076',
     tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
+    tabIconSelected: '#1D4289',
+    primary: '#1D4289', // Navy
+    accent: '#FBC02D', // Golden Yellow
+    brandRed: '#E31E24',
+    white: '#FFFFFF',
+    card: '#FFFFFF',
+    border: '#E9ECEF',
+    description: '#6C757D',
+    surface: '#FFFFFF',
+    shadow: '#0000000a',
   },
   dark: {
     text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
+    background: '#121212',
+    tint: '#FBC02D', // Accents in Dark mode
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
+    tabIconSelected: '#FBC02D',
+    primary: '#1D4289',
+    accent: '#FBC02D',
+    brandRed: '#E31E24',
+    white: '#1E1E1E',
+    card: '#1E1E1E',
+    border: '#333333',
+    description: '#A1A1A1',
+    surface: '#1E1E1E',
+    shadow: '#000000',
   },
 };
 
