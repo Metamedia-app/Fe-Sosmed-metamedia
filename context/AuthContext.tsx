@@ -31,6 +31,7 @@ type AuthContextType = {
   updateProfile: (data: { bio?: string; tempat_lahir?: string; tanggal_lahir?: string; agama?: string }) => Promise<{ success: boolean; message?: string }>;
   uploadAvatar: (imageUri: string, mimeType: string, fileName: string) => Promise<{ success: boolean; message?: string }>;
   deleteAvatar: () => Promise<{ success: boolean; message?: string }>;
+  changePassword: (data: { oldPassword?: string; newPassword?: string }) => Promise<{ success: boolean; message?: string }>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -175,6 +176,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const changePassword = async (data: { oldPassword?: string; newPassword?: string }) => {
+    if (!token) return { success: false, message: 'No token found' };
+    try {
+      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/password', {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+
+      const result = await response.json();
+      if (response.ok) {
+        return { success: true, message: result.message || 'Password berhasil diubah' };
+      } else {
+        return { success: false, message: result.message || 'Gagal mengubah password' };
+      }
+    } catch (error) {
+      console.error('Change password error:', error);
+      return { success: false, message: 'Terjadi kesalahan koneksi' };
+    }
+  };
+
   return (
     <AuthContext.Provider value={{ 
       isLoggedIn, 
@@ -188,7 +214,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateUserData,
       updateProfile,
       uploadAvatar,
-      deleteAvatar
+      deleteAvatar,
+      changePassword
     }}>
       {children}
     </AuthContext.Provider>

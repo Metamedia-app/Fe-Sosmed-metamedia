@@ -265,6 +265,15 @@ export const CommentModal = ({
     processedIds.current.add(rawCmt._id);
 
     const newCmt: Comment = { ...rawCmt, createdAt: rawCmt.createdAt || rawCmt.created_at };
+    const authorId = rawCmt?.author?._id || rawCmt?.author?.id;
+    const currentUserId = user?._id || user?.id;
+
+    // Jika ini komentar kita sendiri, abaikan socket (sudah ditangani handleSend)
+    // Tapi tetap masukkan ke processedIds agar tidak diproses lagi.
+    if (authorId === currentUserId && authorId !== undefined) {
+      processedIds.current.add(rawCmt._id);
+      return;
+    }
 
     if (!newCmt.parent_id) {
       // ── Komentar utama baru ───────────────────

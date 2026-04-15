@@ -8,17 +8,14 @@ import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { Plus, RefreshCcw } from 'lucide-react-native';
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { Story, storyService } from '@/utils/story';
+import CreateStoryModal from '@/components/CreateStoryModal';
+import StoryViewer from '@/components/StoryViewer';
+import StoryViewersModal from '@/components/StoryViewersModal';
 
-const DUMMY_STORIES = [
-  { id: '0', name: 'Cerita Anda', avatar: 'https://avatar.iran.liara.run/public/boy?username=fajar', isUser: true },
-  { id: '1', name: 'Budi', avatar: 'https://avatar.iran.liara.run/public/boy?username=budi' },
-  { id: '2', name: 'Siti', avatar: 'https://avatar.iran.liara.run/public/girl?username=siti' },
-  { id: '3', name: 'Amin', avatar: 'https://avatar.iran.liara.run/public/boy?username=amin' },
-  { id: '4', name: 'Dewi', avatar: 'https://avatar.iran.liara.run/public/girl?username=dewi' },
-  { id: '5', name: 'Hadi', avatar: 'https://avatar.iran.liara.run/public/boy?username=hadi' },
-];
+// No dummy stories needed
 
 export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -27,13 +24,38 @@ export default function HomeScreen() {
   const { lastEvent } = useSocket();
   
   const [posts, setPosts] = useState<PostData[]>([]);
+  const [stories, setStories] = useState<Story[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingStories, setIsLoadingStories] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Modal States
+  const [isCreateStoryVisible, setIsCreateStoryVisible] = useState(false);
+  const [isStoryViewerVisible, setIsStoryViewerVisible] = useState(false);
+  const [isViewersVisible, setIsViewersVisible] = useState(false);
+  const [selectedStoryGroup, setSelectedStoryGroup] = useState<Story[]>([]);
+  const [activeStoryIdForViewers, setActiveStoryIdForViewers] = useState<string | null>(null);
+
+  const fetchStories = useCallback(async () => {
+    if (!token) return;
+    setIsLoadingStories(true);
+    try {
+      const result = await storyService.getStories(token);
+      if (result.success && result.data?.stories) {
+        setStories(result.data.stories as any);
+      }
+    } catch (err) {
+      console.error('Fetch stories error:', err);
+    } finally {
+      setIsLoadingStories(false);
+    }
+  }, [token]);
 
   const fetchPosts = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setIsRefreshing(true);
+      fetchStories();
     } else {
       setIsLoading(true);
     }
@@ -51,8 +73,7 @@ export default function HomeScreen() {
       const result = await response.json();
 
       if (response.ok) {
-        // Data is in result.data.posts
-        const fetchedPosts = result.data?.posts || [];
+        const fetchedPosts = (result.data?.posts || []).filter((p: any) => p.type !== 'repost');
         setPosts(fetchedPosts);
       } else {
         setError(result.message || 'Gagal mengambil postingan');
@@ -64,11 +85,12 @@ export default function HomeScreen() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [token]);
+  }, [token, fetchStories]);
 
   useEffect(() => {
+    fetchStories();
     fetchPosts();
-  }, [fetchPosts]);
+  }, [refreshSignal, token, fetchPosts, fetchStories]);
 
   // Listen for global refresh signal from CreatePostModal
   useEffect(() => {
@@ -84,7 +106,7 @@ export default function HomeScreen() {
     // New post from anyone: prepend to feed
     if (lastEvent.type === 'new_post') {
       const newPost: PostData = lastEvent.data?.post ?? lastEvent.data;
-      if (!newPost?._id) return;
+      if (!newPost?._id || newPost.type === 'repost') return;
       setPosts((prev) => {
         if (prev.some((p) => p._id === newPost._id)) return prev;
         return [newPost, ...prev];
@@ -107,30 +129,100 @@ export default function HomeScreen() {
     // Updating posts[] here would reset PostCard’s local state and cause double-counting.
   }, [lastEvent]);
 
+  const groupedStories = useMemo(() => {
+    // Current stories state now contains StoryGroup[] from the API
+    const groups = (stories as any[]).map(group => {
+      const author = group.user || group.author || { nama: 'Pengguna' };
+      const authorId = author._id || author.id;
+      
+      const normalizedItems = (group.items || []).map((story: any) => {
+        // Robust media detection (same as before)
+        let mediaUrl = "";
+        if (typeof story.media === 'string') {
+          mediaUrl = story.media;
+        } else if (story.media) {
+          mediaUrl = story.media.url || story.media.path || story.media.uri || story.media.media_url || "";
+        }
+
+        // Expand relative URL
+        if (mediaUrl && !mediaUrl.startsWith('http')) {
+          const rootUrl = BASE_URL.replace('/api/v1', '');
+          mediaUrl = `${rootUrl}${mediaUrl.startsWith('/') ? '' : '/'}${mediaUrl}`;
+        }
+
+        return {
+          ...story,
+          author_id: authorId,
+          author: author,
+          media: {
+             ...story.media,
+             url: mediaUrl,
+             type: story.media?.type || (mediaUrl.match(/\.(mp4|mov|wmv|avi|flv|mkv|webm)$/i) ? 'video' : 'image')
+          }
+        };
+      });
+
+      return {
+        author,
+        stories: normalizedItems
+      };
+    });
+
+    // Sort so user's story is first, then by latest story date
+    return groups.sort((a, b) => {
+      const aId = (a.author?._id || a.author?.id || "").toString().toLowerCase();
+      const bId = (b.author?._id || b.author?.id || "").toString().toLowerCase();
+      const myId = (user?._id || user?.id || "").toString().toLowerCase();
+      
+      if (aId === myId) return -1;
+      if (bId === myId) return 1;
+      
+      const getLatestTime = (g: any) => {
+        const dateStr = g.stories[0]?.createdAt || g.stories[0]?.created_at;
+        const time = new Date(dateStr).getTime();
+        return isNaN(time) ? 0 : time;
+      };
+
+      return getLatestTime(b) - getLatestTime(a);
+    });
+  }, [stories, user]);
+
   const StorySection = () => {
-    const userStory = DUMMY_STORIES[0];
-    const otherStories = DUMMY_STORIES.slice(1);
+    const myGroup = groupedStories.find(g => g.author._id === user?._id || g.author._id === user?.id);
+    const otherGroups = groupedStories.filter(g => g.author._id !== user?._id && g.author._id !== user?.id);
+
+    const handleOpenGroup = (groupStories: Story[]) => {
+      setSelectedStoryGroup(groupStories);
+      setIsStoryViewerVisible(true);
+    };
 
     return (
       <View style={[styles.storyContainer, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
-        {/* Fixed User Story */}
-        <TouchableOpacity style={styles.fixedStory}>
-          <View style={[styles.avatarRing, { borderColor: theme.border }]}>
+        {/* Fixed User Story Slot */}
+        <TouchableOpacity 
+          style={styles.fixedStory} 
+          onPress={() => myGroup ? handleOpenGroup(myGroup.stories) : setIsCreateStoryVisible(true)}
+        >
+          <View style={[styles.avatarRing, { borderColor: myGroup ? theme.tint : theme.border }]}>
             <Image 
               source={{ uri: getAvatarUrl(user || { nama: 'Fajar' }, true) }} 
               style={styles.storyAvatar} 
             />
-            <View style={[styles.plusIcon, { backgroundColor: theme.tint }]}>
-              <Plus size={12} color="#FFF" />
-            </View>
+            {!myGroup && (
+              <View style={[styles.plusIcon, { backgroundColor: theme.tint }]}>
+                <Plus size={12} color="#FFF" />
+              </View>
+            )}
           </View>
           <Text style={[styles.storyName, { color: theme.text }]} numberOfLines={1}>
-            Cerita Anda
+            {myGroup ? 'Cerita Anda' : 'Buat Cerita'}
           </Text>
         </TouchableOpacity>
 
         {/* Separator Divider */}
-        <View style={[styles.storyDivider, { backgroundColor: theme.border }]} />
+        {otherGroups.length > 0 && (
+          <View style={[styles.storyDivider, { backgroundColor: theme.border }]} />
+        )}
 
         {/* Scrollable Other Stories */}
         <ScrollView 
@@ -138,13 +230,20 @@ export default function HomeScreen() {
           showsHorizontalScrollIndicator={false} 
           contentContainerStyle={styles.storyContent}
         >
-          {otherStories.map((story) => (
-            <TouchableOpacity key={story.id} style={styles.storyItem}>
+          {otherGroups.map((group, index) => (
+            <TouchableOpacity 
+              key={group.author?._id || group.author?.id || `group-${index}`} 
+              style={styles.storyItem}
+              onPress={() => handleOpenGroup(group.stories)}
+            >
               <View style={[styles.avatarRing, { borderColor: theme.tint }]}>
-                <Image source={{ uri: story.avatar }} style={styles.storyAvatar} />
+                <Image 
+                  source={{ uri: getAvatarUrl(group.author, true) }} 
+                  style={styles.storyAvatar} 
+                />
               </View>
               <Text style={[styles.storyName, { color: theme.text }]} numberOfLines={1}>
-                {story.name}
+                {group.author.nama}
               </Text>
             </TouchableOpacity>
           ))}
@@ -194,6 +293,30 @@ export default function HomeScreen() {
           }
         />
       )}
+
+      {/* Modals */}
+      <CreateStoryModal 
+        isVisible={isCreateStoryVisible} 
+        onClose={() => setIsCreateStoryVisible(false)}
+        onSuccess={() => fetchStories()}
+      />
+      
+      <StoryViewer 
+        isVisible={isStoryViewerVisible}
+        stories={selectedStoryGroup}
+        isPaused={isViewersVisible}
+        onClose={() => setIsStoryViewerVisible(false)}
+        onViewersClick={(id) => {
+          setActiveStoryIdForViewers(id);
+          setIsViewersVisible(true);
+        }}
+      />
+
+      <StoryViewersModal 
+        isVisible={isViewersVisible}
+        storyId={activeStoryIdForViewers}
+        onClose={() => setIsViewersVisible(false)}
+      />
     </View>
   );
 }

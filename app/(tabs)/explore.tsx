@@ -4,10 +4,12 @@ import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { Search } from 'lucide-react-native';
 import React, { useState } from 'react';
-import { Dimensions, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Alert } from 'react-native';
+import { Dimensions, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { followUser } from '@/utils/follow';
+import { searchUsers, SearchUser } from '@/utils/search';
+import { getAvatarUrl } from '@/utils/avatar';
 
 const { width } = Dimensions.get('window');
 const COLUMN_WIDTH = width / 3;
@@ -39,31 +41,35 @@ export default function SearchScreen() {
   const { token } = useAuth();
   
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const SearchHeader = () => (
-    <View style={[styles.header, { backgroundColor: theme.card }]}>
-      <View style={[styles.searchBox, { backgroundColor: theme.background }]}>
-        <Search size={18} color={theme.description} />
-        <TextInput 
-          placeholder="Cari mahasiswa, topik, atau event..." 
-          placeholderTextColor={theme.description}
-          style={[styles.input, { color: theme.text }]}
-        />
-      </View>
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false} 
-        style={styles.tagsContainer}
-        contentContainerStyle={styles.tagsContent}
-      >
-        {TRENDING_TAGS.map((tag) => (
-          <TouchableOpacity key={tag} style={[styles.tagItem, { backgroundColor: theme.background, borderColor: theme.border }]}>
-            <Text style={[styles.tagText, { color: theme.tint }]}>{tag}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
-  );
+  React.useEffect(() => {
+    if (searchQuery.trim().length === 0) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(() => {
+      performSearch();
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery]);
+
+  const performSearch = async () => {
+    if (!token || searchQuery.trim().length === 0) return;
+    setIsLoading(true);
+    setIsSearching(true);
+    const res = await searchUsers(searchQuery, token);
+    if (res.success) {
+      setSearchResults(res.data.users);
+    }
+    setIsLoading(false);
+  };
 
   const handleFollow = async (userId: string) => {
     if (!token) return;
@@ -74,48 +80,6 @@ export default function SearchScreen() {
       Alert.alert('Gagal', res.message || 'Gagal mengikuti pengguna');
     }
   };
-
-  const SuggestedSection = () => (
-    <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Saran Untuk Anda</Text>
-        <TouchableOpacity><Text style={{ color: theme.tint, fontWeight: '600' }}>Lihat Semua</Text></TouchableOpacity>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestedList}>
-        {SUGGESTED_STUDENTS.map((student) => {
-          const isFollowing = followingIds.has(student.id);
-          return (
-            <TouchableOpacity 
-              key={student.id} 
-              style={[styles.suggestedCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-              onPress={() => router.push({
-                pathname: "/user/[id]",
-                params: { id: student.id, initialName: student.name, initialNim: '', initialAvatar: student.avatar }
-              })}
-            >
-              <Image source={{ uri: student.avatar }} style={styles.suggestedAvatar} />
-              <Text style={[styles.suggestedName, { color: theme.text }]} numberOfLines={1}>{student.name}</Text>
-              <Text style={[styles.suggestedProdi, { color: theme.description }]} numberOfLines={1}>{student.prodi}</Text>
-              <TouchableOpacity 
-                style={[
-                  styles.followButton, 
-                  { backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
-                ]}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleFollow(student.id);
-                }}
-              >
-                <Text style={[styles.followButtonText, { color: isFollowing ? theme.text : '#FFF' }]}>
-                  {isFollowing ? 'Mengikuti' : 'Ikuti'}
-                </Text>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -134,11 +98,36 @@ export default function SearchScreen() {
         )}
         ListHeaderComponent={
           <>
-            <SearchHeader />
-            <SuggestedSection />
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 15, marginTop: 10, marginBottom: 10 }]}>Momen Kampus</Text>
-            </View>
+            <SearchHeader 
+              theme={theme}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              isLoading={isLoading}
+              isSearching={isSearching}
+              onSearch={performSearch}
+            />
+            {isSearching ? (
+              <SearchResultsSection 
+                theme={theme}
+                searchResults={searchResults}
+                isLoading={isLoading}
+                searchQuery={searchQuery}
+                router={router}
+                handleFollow={handleFollow}
+              />
+            ) : (
+              <>
+                <SuggestedSection 
+                  theme={theme}
+                  followingIds={followingIds}
+                  handleFollow={handleFollow}
+                  router={router}
+                />
+                <View style={styles.sectionHeader}>
+                  <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 15, marginTop: 10, marginBottom: 10 }]}>Momen Kampus</Text>
+                </View>
+              </>
+            )}
           </>
         }
         // @ts-ignore - estimatedItemSize is required but reported as not existing by the current TS version
@@ -148,6 +137,137 @@ export default function SearchScreen() {
     </View>
   );
 }
+
+// Sub-components moved outside to fix focus issues
+const SearchHeader = ({ theme, searchQuery, setSearchQuery, isLoading, isSearching, onSearch }: any) => (
+  <View style={[styles.header, { backgroundColor: theme.card }]}>
+    <View style={[styles.searchBox, { backgroundColor: theme.background }]}>
+      <Search size={18} color={theme.description} />
+      <TextInput 
+        placeholder="Cari mahasiswa, topik, atau event..." 
+        placeholderTextColor={theme.description}
+        style={[styles.input, { color: theme.text }]}
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+        autoCapitalize="none"
+        returnKeyType="search"
+        onSubmitEditing={onSearch}
+      />
+      {isLoading ? (
+        <ActivityIndicator size="small" color={theme.tint} />
+      ) : (
+        <TouchableOpacity onPress={onSearch}>
+          <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Cari</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+    {!isSearching && (
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false} 
+        style={styles.tagsContainer}
+        contentContainerStyle={styles.tagsContent}
+      >
+        {TRENDING_TAGS.map((tag) => (
+          <TouchableOpacity key={tag} style={[styles.tagItem, { backgroundColor: theme.background, borderColor: theme.border }]}>
+            <Text style={[styles.tagText, { color: theme.tint }]}>{tag}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    )}
+  </View>
+);
+
+const SearchResultsSection = ({ theme, searchResults, isLoading, searchQuery, router, handleFollow }: any) => (
+  <View style={styles.section}>
+    <View style={styles.sectionHeader}>
+      <Text style={[styles.sectionTitle, { color: theme.text }]}>Hasil Pencarian</Text>
+      <Text style={{ color: theme.description, fontSize: 12 }}>{searchResults.length} ditemukan</Text>
+    </View>
+    <View style={styles.searchResultsList}>
+      {searchResults.map((user: SearchUser) => (
+        <TouchableOpacity 
+          key={user._id} 
+          style={[styles.searchResultItem, { backgroundColor: theme.card, borderColor: theme.border }]}
+          onPress={() => router.push({
+            pathname: "/user/[id]",
+            params: { 
+              id: user._id, 
+              initialName: user.nama, 
+              initialNim: user.nim,
+              initialAvatar: getAvatarUrl(user)
+            }
+          } as any)}
+        >
+          <Image 
+            source={{ uri: getAvatarUrl(user) }} 
+            style={styles.searchResultAvatar} 
+          />
+          <View style={styles.searchResultInfo}>
+            <Text style={[styles.searchResultName, { color: theme.text }]}>{user.nama}</Text>
+            <Text style={[styles.searchResultNim, { color: theme.description }]}>{user.nim} • {user.program_studi}</Text>
+          </View>
+          <TouchableOpacity 
+            style={[styles.smallFollowButton, { backgroundColor: theme.tint }]}
+            onPress={(e) => {
+              e.stopPropagation();
+              handleFollow(user._id);
+            }}
+          >
+            <Text style={styles.smallFollowButtonText}>Ikuti</Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      ))}
+      {searchResults.length === 0 && !isLoading && (
+        <View style={styles.emptySearch}>
+          <Text style={{ color: theme.description }}>Tidak ada hasil untuk "{searchQuery}"</Text>
+        </View>
+      )}
+    </View>
+  </View>
+);
+
+const SuggestedSection = ({ theme, followingIds, handleFollow, router }: any) => (
+  <View style={styles.section}>
+    <View style={styles.sectionHeader}>
+      <Text style={[styles.sectionTitle, { color: theme.text }]}>Saran Untuk Anda</Text>
+      <TouchableOpacity><Text style={{ color: theme.tint, fontWeight: '600' }}>Lihat Semua</Text></TouchableOpacity>
+    </View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestedList}>
+      {SUGGESTED_STUDENTS.map((student) => {
+        const isFollowing = followingIds.has(student.id);
+        return (
+          <TouchableOpacity 
+            key={student.id} 
+            style={[styles.suggestedCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+            onPress={() => router.push({
+              pathname: "/user/[id]",
+              params: { id: student.id, initialName: student.name, initialNim: '', initialAvatar: student.avatar }
+            } as any)}
+          >
+            <Image source={{ uri: student.avatar }} style={styles.suggestedAvatar} />
+            <Text style={[styles.suggestedName, { color: theme.text }]} numberOfLines={1}>{student.name}</Text>
+            <Text style={[styles.suggestedProdi, { color: theme.description }]} numberOfLines={1}>{student.prodi}</Text>
+            <TouchableOpacity 
+              style={[
+                styles.followButton, 
+                { backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
+              ]}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleFollow(student.id);
+              }}
+            >
+              <Text style={[styles.followButtonText, { color: isFollowing ? theme.text : '#FFF' }]}>
+                {isFollowing ? 'Mengikuti' : 'Ikuti'}
+              </Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  </View>
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -269,5 +389,46 @@ const styles = StyleSheet.create({
   momentImage: {
     width: '100%',
     height: '100%',
+  },
+  searchResultsList: {
+    paddingHorizontal: 15,
+    gap: 10,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 12,
+  },
+  searchResultAvatar: {
+    width: 45,
+    height: 45,
+    borderRadius: 22.5,
+  },
+  searchResultInfo: {
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  searchResultNim: {
+    fontSize: 12,
+  },
+  smallFollowButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  smallFollowButtonText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  emptySearch: {
+    padding: 40,
+    alignItems: 'center',
   },
 });

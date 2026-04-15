@@ -1,24 +1,28 @@
 import { CommentModal } from '@/components/CommentModal';
+import { ShareModal } from '@/components/ShareModal';
+import CreatePostModal from '@/components/CreatePostModal';
+import PostActionModal from '@/components/PostActionModal';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { MessageCircle, MoreHorizontal, Repeat, Share2, ThumbsUp } from 'lucide-react-native';
 import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View, ScrollView, Dimensions } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
-import { syncRecursiveCount, recursiveReplyCounts, notifyPostCommentsUpdated } from '../utils/commentSyncStore';
-import { BASE_URL } from '../utils/api';
-import { getAvatarUrl } from '../utils/avatar';
+import { Alert, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSequence,
   withSpring
 } from 'react-native-reanimated';
+import { BASE_URL } from '../utils/api';
+import { getAvatarUrl } from '../utils/avatar';
+import { notifyPostCommentsUpdated, recursiveReplyCounts, syncRecursiveCount } from '../utils/commentSyncStore';
+import { deletePost } from '../utils/post';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -28,17 +32,20 @@ export type PostMedia = {
   thumbnail_url?: string;
 };
 
+export type PostAuthor = {
+  _id: string;
+  id?: string;
+  nim: string;
+  nama: string;
+  program_studi?: string;
+  avatar?: string;
+  avatar_url?: string;
+  jenis_kelamin?: string;
+};
+
 export type PostData = {
   _id: string;
-  author: {
-    _id: string;
-    nim: string;
-    nama: string;
-    program_studi: string;
-    avatar?: string;
-    avatar_url?: string;
-    jenis_kelamin?: string;
-  };
+  author: PostAuthor;
   caption: string;
   media: PostMedia[];
   likes_count: number;
@@ -47,6 +54,21 @@ export type PostData = {
   shares_count: number;
   createdAt: string;
   is_liked?: boolean;
+  is_reposted?: boolean;
+  type?: 'original' | 'repost';
+  original_post_id?: {
+    _id: string;
+    author_id: PostAuthor;
+    caption: string;
+    media: PostMedia[];
+    likes_count: number;
+    comments_count: number;
+    reposts_count: number;
+    shares_count: number;
+    is_liked?: boolean;
+    is_reposted?: boolean;
+    createdAt: string;
+  } | null;
 };
 
 
@@ -87,57 +109,165 @@ const PostMediaItem = ({ media, theme }: { media: PostMedia; theme: any }) => {
   );
 };
 
-export const PostCard = ({ post }: { post: PostData }) => {
+/**
+ * Sub-component to render the original post content if it's a repost
+ */
+const OriginalPostBlock = React.memo(({ originalPost, theme, onAuthorPress }: { 
+  originalPost: any; 
+  theme: any;
+  onAuthorPress: (author: PostAuthor) => void;
+}) => {
+  if (!originalPost) return null;
+
+  const author = originalPost.author_id || originalPost.author;
+  const avatarUrl = getAvatarUrl(author);
+  const mediaCount = originalPost.media?.length || 0;
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('id-ID', { 
+      day: 'numeric', 
+      month: 'short', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+
+  return (
+    <View style={[styles.originalPostContainer, { borderColor: theme.border }]}>
+      <TouchableOpacity 
+        style={styles.originalAuthorInfo}
+        onPress={() => onAuthorPress(author)}
+        activeOpacity={0.7}
+      >
+        <Image source={{ uri: avatarUrl }} style={styles.originalAvatar} />
+        <View>
+          <Text style={[styles.originalName, { color: theme.text }]}>{author?.nama}</Text>
+          <Text style={[styles.originalSubText, { color: theme.description }]}>
+            {author?.nim} • {formatDate(originalPost.createdAt)}
+          </Text>
+        </View>
+      </TouchableOpacity>
+
+      {originalPost.caption ? (
+        <Text style={[styles.originalContent, { color: theme.text }]} numberOfLines={3}>
+          {originalPost.caption}
+        </Text>
+      ) : null}
+
+      {mediaCount > 0 && (
+        <View style={styles.originalMediaPreview}>
+          <Image 
+            source={{ uri: originalPost.media[0].url }} 
+            style={styles.originalMediaImage}
+            contentFit="cover"
+          />
+          {mediaCount > 1 && (
+            <View style={styles.originalMediaOverlay}>
+              <Text style={styles.originalMediaCount}>+{mediaCount - 1}</Text>
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+});
+
+export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSuccess?: () => void }) => {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const { token } = useAuth();
   const router = useRouter();
+  const { user } = useAuth();
 
-  // Local State for Like
+  // === REPOST LOGIC ===
+  // isRepost: this post object is itself a repost (type='repost')
+  const isRepost = post.type === 'repost' && !!post.original_post_id;
+  
+  // targetId: the ID we hit the API with - always the ORIGINAL post
+  const targetId = isRepost ? post.original_post_id!._id : post._id;
+
+  // If user is viewing a post of type='repost', they (or someone) has already reposted it.
+  // If it's THEIR repost (it's in their profile reposts tab), they have already reposted → always true.
+  // For original posts in the feed: rely on API's is_reposted.
+  const initialReposted = isRepost
+    ? true  // This post IS a repost – current user owns it, so they've reposted
+    : (post.is_reposted || false);
+
+  // Counts always come from original post if available (correct total)
+  const initialRepostCount = isRepost ? (post.original_post_id?.reposts_count ?? post.reposts_count) : post.reposts_count;
+  const initialLikeCount = isRepost ? (post.original_post_id?.likes_count ?? post.likes_count) : post.likes_count;
+  const initialCommentCount = isRepost ? (post.original_post_id?.comments_count ?? post.comments_count) : post.comments_count;
+  const initialShareCount = isRepost ? (post.original_post_id?.shares_count ?? post.shares_count) : post.shares_count;
+
+  const [likeCount, setLikeCount] = useState(initialLikeCount || 0);
+  const [commentsCount, setCommentsCount] = useState(initialCommentCount || 0);
+  const [sharesCount, setSharesCount] = useState(initialShareCount || 0);
+  const [isReposted, setIsReposted] = useState(initialReposted || false);
+  const [repostsCount, setRepostsCount] = useState(initialRepostCount || 0);
   const [isLiked, setIsLiked] = useState(post.is_liked || false);
-  const [likeCount, setLikeCount] = useState(post.likes_count);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [isCommentModalVisible, setIsCommentModalVisible] = useState(false);
+  const [isShareModalVisible, setIsShareModalVisible] = useState(false);
+  const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+  const [isActionModalVisible, setIsActionModalVisible] = useState(false);
+  const [isProcessingRepost, setIsProcessingRepost] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  
+  const processedCommentIds = React.useRef<Set<string>>(new Set());
+
+  const { lastEvent } = useSocket();
 
   // Sync isLiked only when post_id or post.is_liked changes
   React.useEffect(() => {
     setIsLiked(post.is_liked || false);
   }, [post._id, post.is_liked]);
 
+  // Sync repost state when post changes
+  React.useEffect(() => {
+    const newReposted = isRepost ? true : (post.is_reposted || false);
+    setIsReposted(newReposted);
+    setRepostsCount(initialRepostCount || 0);
+  }, [post._id]);
+
   // Sync likeCount when post.likes_count changes (e.g. from parent's socket update)
   React.useEffect(() => {
-    setLikeCount(post.likes_count);
-  }, [post._id, post.likes_count]);
+    setLikeCount(initialLikeCount || 0);
+  }, [post._id, initialLikeCount]);
 
-  // Sync commentsCount when post.comments_count changes (e.g. from refresh or parent update)
+  // Sync shares count
   React.useEffect(() => {
-    setCommentsCount(post.comments_count);
-  }, [post._id, post.comments_count]);
+    setSharesCount(initialShareCount || 0);
+  }, [post._id, initialShareCount]);
 
-  const [isCommentModalVisible, setIsCommentModalVisible] = useState(false);
-  const [commentsCount, setCommentsCount] = useState(post.comments_count);
-  const processedCommentIds = React.useRef<Set<string>>(new Set());
-
-  const { lastEvent } = useSocket();
-  const { user } = useAuth();
+  // Sync commentsCount when post.comments_count changes
+  // We use a guard to prevent "jumping back" if the prop is stale but FE already has a newer count
+  const lastSyncedPostId = React.useRef(post._id);
+  React.useEffect(() => {
+    if (lastSyncedPostId.current !== post._id) {
+      setCommentsCount(initialCommentCount || 0);
+      lastSyncedPostId.current = post._id;
+    } else if (initialCommentCount !== undefined && initialCommentCount > commentsCount) {
+      setCommentsCount(initialCommentCount);
+    }
+  }, [post._id, initialCommentCount]);
 
   React.useEffect(() => {
     if (!lastEvent) return;
 
 
+    // 1. handle NEW_COMMENT
     if (lastEvent.type === 'new_comment') {
       const eventPostId = lastEvent.data?.post_id ?? lastEvent.data?.postId;
       const rawCmt = lastEvent.data?.comment ?? lastEvent.data;
       const commentId = rawCmt?._id;
       
-      // Jika modal sedang terbuka, biarkan modal yang mengurus penghitungan.
-      // Kita hanya mendaftarkan ID nya agar tidak dihitung ulang nanti.
       if (commentId) {
         if (isCommentModalVisible) {
           processedCommentIds.current.add(commentId);
           return;
         }
 
-        // Jika modal tertutup dan ID belum diproses, baru kita tambahkan ke count.
         if (eventPostId === post._id && !processedCommentIds.current.has(commentId)) {
           processedCommentIds.current.add(commentId);
           const authorId = rawCmt?.author?._id || rawCmt?.author?.id;
@@ -149,7 +279,31 @@ export const PostCard = ({ post }: { post: PostData }) => {
         }
       }
     }
-  }, [lastEvent, post._id, user?.id, user?._id, isCommentModalVisible]);
+
+    // 2. handle LIKE_UPDATE
+    if (lastEvent.type === 'like_update') {
+      const { post_id, likes_count } = lastEvent.data;
+      if (post_id === targetId && likes_count !== undefined) {
+        setLikeCount(likes_count);
+      }
+    }
+
+    // 3. handle REPOST_UPDATE
+    if (lastEvent.type === 'repost_update') {
+      const { post_id, reposts_count } = lastEvent.data;
+      if (post_id === targetId && reposts_count !== undefined) {
+        setRepostsCount(reposts_count);
+      }
+    }
+
+    // 4. handle SHARE_UPDATE
+    if (lastEvent.type === 'share_update') {
+      const { post_id, shares_count } = lastEvent.data;
+      if (post_id === targetId && shares_count !== undefined) {
+        setSharesCount(shares_count);
+      }
+    }
+  }, [lastEvent, post._id, targetId, user?.id, user?._id, isCommentModalVisible]);
   
   // Zero-Delay: Pre-fetch recursive counts silently ONLY when user starts to touch the button
   const handlePreSync = () => {
@@ -219,6 +373,122 @@ export const PostCard = ({ post }: { post: PostData }) => {
     setIsCommentModalVisible(true);
   };
 
+  const handleRepost = async () => {
+    if (isProcessingRepost) return;
+
+    // Block if viewing own original post
+    const originalAuthorId = isRepost
+      ? (post.original_post_id?.author_id?._id || post.original_post_id?.author_id?.id)
+      : (post.author?._id || post.author?.id);
+
+    if (originalAuthorId === (user?._id || user?.id)) {
+      Alert.alert('Info', 'Anda tidak dapat me-repost postingan sendiri');
+      return;
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsProcessingRepost(true);
+    const prevCount = repostsCount;
+    const prevReposted = isReposted;
+
+    // Optimistic update BEFORE API call
+    if (isReposted) {
+      // Will UNREPOST - count goes down, turn off
+      setRepostsCount(prev => Math.max(0, prev - 1));
+      setIsReposted(false);
+    } else {
+      // Will REPOST - count goes up, turn on
+      setRepostsCount(prev => prev + 1);
+      setIsReposted(true);
+    }
+
+    try {
+      // POST = new repost, DELETE = unrepost
+      // Backend needs: POST /posts/:id/repost AND DELETE /posts/:id/repost
+      const method = prevReposted ? 'DELETE' : 'POST';
+      const res = await fetch(`${BASE_URL}/posts/${targetId}/repost`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      });
+      const result = await res.json();
+      if (res.ok && result.success) {
+        // Sync count to server truth
+        if (result.data?.original_reposts_count !== undefined) {
+          setRepostsCount(result.data.original_reposts_count);
+        }
+        // Confirm state based on what we intended
+        setIsReposted(!prevReposted);
+      } else {
+        throw new Error(result.message || 'Gagal');
+      }
+    } catch (e: any) {
+      // Revert optimistic update on failure
+      setRepostsCount(prevCount);
+      setIsReposted(prevReposted);
+    } finally {
+      setIsProcessingRepost(false);
+    }
+  };
+
+  const handleShare = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsShareModalVisible(true);
+  };
+
+  const handleShareSuccess = async () => {
+    const prevCount = sharesCount;
+    setSharesCount(prev => prev + 1);
+
+    try {
+      const res = await fetch(`${BASE_URL}/posts/${post._id}/share`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+        },
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setSharesCount(prevCount);
+    }
+  };
+
+  const handleMoreOptions = () => {
+    setIsActionModalVisible(true);
+  };
+
+  const confirmDelete = () => {
+    Alert.alert(
+      'Hapus Postingan',
+      'Apakah Anda yakin ingin menghapus postingan ini? Tindakan ini tidak dapat dibatalkan.',
+      [
+        { text: 'Batal', style: 'cancel' },
+        { 
+          text: 'Hapus', 
+          style: 'destructive', 
+          onPress: handleDelete 
+        }
+      ]
+    );
+  };
+
+  const handleDelete = async () => {
+    if (!token) return;
+    setIsDeleting(true);
+    const res = await deletePost(post._id, token);
+    setIsDeleting(false);
+    
+    if (res.success) {
+      Alert.alert('Berhasil', res.message || 'Postingan berhasil dihapus.');
+      onDeleteSuccess?.();
+    } else {
+      Alert.alert('Gagal', res.message || 'Gagal menghapus postingan.');
+    }
+  };
+
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString('id-ID', { 
@@ -240,6 +510,16 @@ export const PostCard = ({ post }: { post: PostData }) => {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.card }]}>
+      {/* Repost Header Indicator */}
+      {post.type === 'repost' && (
+        <View style={styles.repostHeader}>
+          <Repeat size={14} color={theme.description} />
+          <Text style={[styles.repostHeaderText, { color: theme.description }]}>
+            Sudah memposting ulang
+          </Text>
+        </View>
+      )}
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity 
@@ -259,23 +539,44 @@ export const PostCard = ({ post }: { post: PostData }) => {
           <View>
             <Text style={[styles.name, { color: theme.text }]}>{post.author.nama}</Text>
             <Text style={[styles.subText, { color: theme.description }]}>
-              {post.author.nim} • {post.author.program_studi}
+              {post.author.nim} {post.author.program_studi ? `• ${post.author.program_studi}` : ''}
             </Text>
             <Text style={[styles.subText, { color: theme.description, fontSize: 11 }]}>
               {formatDate(post.createdAt)}
             </Text>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity>
+        <TouchableOpacity onPress={handleMoreOptions}>
           <MoreHorizontal size={20} color={theme.description} />
         </TouchableOpacity>
       </View>
 
       {/* Content */}
-      <Text style={[styles.content, { color: theme.text }]}>{post.caption}</Text>
+      {post.caption ? (
+        <Text style={[styles.content, { color: theme.text }]}>{post.caption}</Text>
+      ) : null}
 
-      {/* Post Media Rendering (Carousel for multiple) */}
-      {mediaCount > 0 && (
+      {/* Repost Block */}
+      {post.type === 'repost' && post.original_post_id && (
+        <View style={styles.originalPostWrapper}>
+          <OriginalPostBlock 
+            originalPost={post.original_post_id} 
+            theme={theme}
+            onAuthorPress={(author) => router.push({
+              pathname: "/user/[id]",
+              params: { 
+                id: author._id,
+                initialName: author.nama, 
+                initialNim: author.nim, 
+                initialAvatar: getAvatarUrl(author, (author.jenis_kelamin || '').toLowerCase() === 'laki-laki') 
+              }
+            })}
+          />
+        </View>
+      )}
+
+      {/* Post Media Rendering (Carousel for multiple) - Only for original posts */}
+      {post.type !== 'repost' && mediaCount > 0 && (
         <View>
           <ScrollView 
             horizontal 
@@ -318,13 +619,21 @@ export const PostCard = ({ post }: { post: PostData }) => {
 
       {/* Stats */}
       <View style={[styles.statsRow, { borderBottomColor: theme.border }]}>
-        <View style={styles.statItem}>
-          <View style={[styles.likeBadge, { backgroundColor: isLiked ? '#1D4289' : theme.tint }]}>
-            <ThumbsUp size={10} color="#FFF" />
+        <View style={styles.leftStats}>
+          <View style={styles.statItem}>
+            <View style={[styles.likeBadge, { backgroundColor: isLiked ? '#1D4289' : theme.tint }]}>
+              <ThumbsUp size={10} color="#FFF" />
+            </View>
+            <Text style={[styles.statText, { color: theme.description }]}>{likeCount}</Text>
           </View>
-          <Text style={[styles.statText, { color: theme.description }]}>{likeCount}</Text>
         </View>
-        <Text style={[styles.statText, { color: theme.description }]}>{commentsCount} Komentar</Text>
+        <View style={styles.rightStats}>
+          <Text style={[styles.statText, { color: theme.description }]}>{commentsCount} Komentar</Text>
+          <Text style={[styles.statSeparator, { color: theme.border }]}>•</Text>
+          <Text style={[styles.statText, { color: theme.description }]}>{repostsCount} Repost</Text>
+          <Text style={[styles.statSeparator, { color: theme.border }]}>•</Text>
+          <Text style={[styles.statText, { color: theme.description }]}>{sharesCount} Share</Text>
+        </View>
       </View>
 
       {/* Actions */}
@@ -352,11 +661,34 @@ export const PostCard = ({ post }: { post: PostData }) => {
           <MessageCircle size={18} color={theme.description} />
           <Text style={[styles.actionText, { color: theme.description }]}>Komentar</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton}>
-          <Repeat size={18} color={theme.description} />
-          <Text style={[styles.actionText, { color: theme.description }]}>Repostat</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton}>
+        {/* Repost Button: Hide ONLY if user is the ORIGINAL AUTHOR */}
+        {(() => {
+          const originalAuthorId = isRepost
+            ? (post.original_post_id?.author_id?._id || post.original_post_id?.author_id?.id)
+            : (post.author?._id || post.author?.id);
+          const myId = user?._id || user?.id;
+          if (originalAuthorId === myId) return null;
+          return (
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleRepost}
+              activeOpacity={0.7}
+              disabled={isProcessingRepost}
+            >
+              <Repeat
+                size={20}
+                color={isReposted ? theme.primary : theme.text}
+              />
+              <Text style={[
+                styles.actionText,
+                { color: isReposted ? theme.primary : theme.text }
+              ]}>
+                {repostsCount}
+              </Text>
+            </TouchableOpacity>
+          );
+        })()}
+        <TouchableOpacity style={styles.actionButton} onPress={handleShare}>
           <Share2 size={18} color={theme.description} />
           <Text style={[styles.actionText, { color: theme.description }]}>Bagikan</Text>
         </TouchableOpacity>
@@ -368,6 +700,30 @@ export const PostCard = ({ post }: { post: PostData }) => {
         postId={post._id}
         initialCommentsCount={commentsCount}
         onCountChange={(count) => setCommentsCount(count)}
+      />
+
+      <ShareModal
+        isVisible={isShareModalVisible}
+        onClose={() => setIsShareModalVisible(false)}
+        postId={post._id}
+        postTitle={post.caption}
+        onShareSuccess={handleShareSuccess}
+      />
+
+      <CreatePostModal
+        isVisible={isEditModalVisible}
+        onClose={() => setIsEditModalVisible(false)}
+        postToEdit={post}
+      />
+
+      <PostActionModal 
+        isVisible={isActionModalVisible}
+        onClose={() => setIsActionModalVisible(false)}
+        isOwner={(post.author?._id || post.author?.id || post.author) === (user?._id || user?.id)}
+        onEdit={() => setIsEditModalVisible(true)}
+        onDelete={confirmDelete}
+        onReport={() => Alert.alert('Info', 'Terima kasih, laporan Anda telah diterima.')}
+        onCopyLink={() => Alert.alert('Berhasil', 'Tautan berhasil disalin!')}
       />
     </View>
   );
@@ -459,9 +815,22 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 15,
     paddingBottom: 12,
     borderBottomWidth: 0.5,
+  },
+  leftStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rightStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statSeparator: {
+    marginHorizontal: 4,
+    fontSize: 13,
   },
   statItem: {
     flexDirection: 'row',
@@ -492,5 +861,76 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 14,
     fontWeight: '600',
+  },
+  repostHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingBottom: 8,
+    gap: 6,
+  },
+  repostHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  originalPostWrapper: {
+    paddingHorizontal: 15,
+    marginBottom: 12,
+  },
+  originalPostContainer: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 4,
+  },
+  originalAuthorInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  originalAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 10,
+    backgroundColor: '#F1F3F5',
+  },
+  originalName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  originalSubText: {
+    fontSize: 11,
+  },
+  originalContent: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  originalMediaPreview: {
+    width: '100%',
+    height: 180,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#000',
+  },
+  originalMediaImage: {
+    width: '100%',
+    height: '100%',
+  },
+  originalMediaOverlay: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  originalMediaCount: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
 });

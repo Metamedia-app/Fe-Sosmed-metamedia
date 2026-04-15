@@ -20,10 +20,14 @@ import {
     Alert
 } from 'react-native';
 
+import { updatePost } from '@/utils/post';
+import { PostData } from './PostCard';
+
 interface CreatePostModalProps {
   isVisible: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  postToEdit?: PostData | null;
 }
 
 type SelectedMedia = {
@@ -31,7 +35,7 @@ type SelectedMedia = {
   type: 'image' | 'video';
 };
 
-export default function CreatePostModal({ isVisible, onClose, onSuccess }: CreatePostModalProps) {
+export default function CreatePostModal({ isVisible, onClose, onSuccess, postToEdit }: CreatePostModalProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const { token, user, triggerRefresh } = useAuth();
@@ -40,6 +44,20 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess }: Creat
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Sync content when postToEdit changes or modal opens
+  React.useEffect(() => {
+    if (isVisible) {
+      if (postToEdit) {
+        setContent(postToEdit.caption || '');
+        // We don't load media for editing currently as PATCH only handles caption
+        setSelectedMedia([]);
+      } else {
+        setContent('');
+        setSelectedMedia([]);
+      }
+    }
+  }, [isVisible, postToEdit]);
+
   const userData = {
     name: user?.nama || 'Pengguna Metamedia',
     avatar: `https://avatar.iran.liara.run/public/boy?username=${user?.nama || 'user'}`,
@@ -47,6 +65,11 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess }: Creat
   };
 
   const pickMedia = async () => {
+    if (postToEdit) {
+      Alert.alert('Info', 'Maaf, untuk saat ini media tidak dapat diubah saat mengedit postingan.');
+      return;
+    }
+    // ... rest of pickMedia ...
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
     if (status !== 'granted') {
@@ -58,7 +81,7 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess }: Creat
       mediaTypes: ['images', 'videos'],
       allowsMultipleSelection: true,
       quality: 0.8,
-      selectionLimit: 5, // Optional limit
+      selectionLimit: 5,
     });
 
     if (!result.canceled) {
@@ -80,58 +103,65 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess }: Creat
     setIsLoading(true);
 
     try {
-      const formData = new FormData();
-      formData.append('caption', content);
-      
-      // Loop through all selected media
-      for (const item of selectedMedia) {
-        const filename = item.uri.split('/').pop() || `upload-${Date.now()}.jpg`;
-        const ext = filename.split('.').pop()?.toLowerCase();
+      if (postToEdit) {
+        // EDIT MODE: PATCH request
+        const res = await updatePost(postToEdit._id, { caption: content }, token || '');
+        if (res.success) {
+          Alert.alert('Berhasil', 'Postingan kamu sudah diperbarui!');
+          onClose();
+          if (onSuccess) onSuccess();
+          triggerRefresh();
+        } else {
+          Alert.alert('Gagal', res.message || 'Gagal memperbarui postingan.');
+        }
+      } else {
+        // CREATE MODE: FormData / POST request
+        const formData = new FormData();
+        formData.append('caption', content);
         
-        let type = item.type === 'video' ? 'video/mp4' : 'image/jpeg';
-        if (ext === 'png') type = 'image/png';
-        else if (ext === 'mov') type = 'video/mp4';
+        for (const item of selectedMedia) {
+          const filename = item.uri.split('/').pop() || `upload-${Date.now()}.jpg`;
+          const ext = filename.split('.').pop()?.toLowerCase();
+          
+          let type = item.type === 'video' ? 'video/mp4' : 'image/jpeg';
+          if (ext === 'png') type = 'image/png';
+          else if (ext === 'mov') type = 'video/mp4';
 
-        if (Platform.OS === 'web') {
-          try {
+          if (Platform.OS === 'web') {
             const blobResponse = await fetch(item.uri);
             const blob = await blobResponse.blob();
             formData.append('files', blob, filename);
-          } catch (e) {
-            console.error('Blob error:', e);
+          } else {
+            // @ts-ignore
+            formData.append('files', {
+              uri: item.uri,
+              name: filename,
+              type: type,
+            });
           }
-        } else {
-          // @ts-ignore
-          formData.append('files', {
-            uri: item.uri,
-            name: filename,
-            type: type,
-          });
         }
-      }
 
-      console.log(`Sending post with ${selectedMedia.length} media items...`);
+        const response = await fetch('https://besosmed-production.up.railway.app/api/v1/posts', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: formData,
+        });
 
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/posts', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: formData,
-      });
+        const result = await response.json();
 
-      const result = await response.json();
-
-      if (response.ok) {
-        Alert.alert('Berhasil', 'Postingan kamu sudah terbit! 🚀');
-        triggerRefresh();
-        onClose();
-        setContent('');
-        setSelectedMedia([]);
-        if (onSuccess) onSuccess();
-      } else {
-        Alert.alert('Gagal', result.message || 'Gagal memposting. Coba lagi nanti.');
+        if (response.ok) {
+          Alert.alert('Berhasil', 'Postingan kamu sudah terbit! 🚀');
+          triggerRefresh();
+          onClose();
+          setContent('');
+          setSelectedMedia([]);
+          if (onSuccess) onSuccess();
+        } else {
+          Alert.alert('Gagal', result.message || 'Gagal memposting. Coba lagi nanti.');
+        }
       }
     } catch (error) {
       console.error('Post error:', error);
@@ -161,9 +191,11 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess }: Creat
                 <TouchableOpacity onPress={onClose} style={styles.closeButton} disabled={isLoading}>
                   <X size={26} color={theme.text} strokeWidth={2.5} />
                 </TouchableOpacity>
-                <Text style={[styles.headerTitle, { color: theme.text }]}>Buat Postingan</Text>
+                <Text style={[styles.headerTitle, { color: theme.text }]}>
+                  {postToEdit ? 'Edit Postingan' : 'Buat Postingan'}
+                </Text>
                 <TouchableOpacity 
-                  style={[
+                   style={[
                     styles.postButton, 
                     { backgroundColor: (content.length > 0 || selectedMedia.length > 0) && !isLoading ? theme.tint : theme.border }
                   ]}
@@ -173,7 +205,9 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess }: Creat
                   {isLoading ? (
                     <ActivityIndicator size="small" color="#FFF" />
                   ) : (
-                    <Text style={[styles.postButtonText, { color: (content.length > 0 || selectedMedia.length > 0) ? '#FFF' : theme.description }]}>Posting</Text>
+                    <Text style={[styles.postButtonText, { color: (content.length > 0 || selectedMedia.length > 0) ? '#FFF' : theme.description }]}>
+                      {postToEdit ? 'Simpan' : 'Posting'}
+                    </Text>
                   )}
                 </TouchableOpacity>
               </View>

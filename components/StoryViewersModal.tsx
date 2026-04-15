@@ -1,0 +1,246 @@
+import { Colors } from '@/constants/theme';
+import { useAuth } from '@/context/AuthContext';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { storyService, Viewer } from '@/utils/story';
+import { Image } from 'expo-image';
+import { X, Search } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import {
+    ActivityIndicator,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+    TouchableWithoutFeedback,
+    TextInput
+} from 'react-native';
+import { getAvatarUrl } from '@/utils/avatar';
+
+interface StoryViewersModalProps {
+  isVisible: boolean;
+  storyId: string | null;
+  onClose: () => void;
+}
+
+export default function StoryViewersModal({ isVisible, storyId, onClose }: StoryViewersModalProps) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const theme = Colors[colorScheme];
+  const { token } = useAuth();
+  
+  const [viewers, setViewers] = useState<Viewer[]>([]);
+  const [totalViews, setTotalViews] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (isVisible && storyId && token) {
+      fetchViewers();
+    } else {
+      setViewers([]);
+      setTotalViews(0);
+      setSearchQuery('');
+    }
+  }, [isVisible, storyId]);
+
+  const fetchViewers = async () => {
+    if (!storyId || !token) return;
+    setIsLoading(true);
+    try {
+      const result = await storyService.getViewers(token, storyId);
+      if (result.success && result.data) {
+        setViewers(result.data.viewers);
+        setTotalViews(result.data.total_views);
+      }
+    } catch (error) {
+      console.error('Fetch viewers error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const filteredViewers = viewers.filter(v => 
+    v.nama.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <Modal
+      animationType="slide"
+      transparent={true}
+      visible={isVisible}
+      onRequestClose={onClose}
+    >
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={styles.overlay}>
+          <TouchableWithoutFeedback>
+            <View style={[styles.modalContainer, { backgroundColor: theme.card }]}>
+              {/* Drag Handle */}
+              <View style={styles.dragHandleContainer}>
+                <View style={[styles.dragHandle, { backgroundColor: theme.border }]} />
+              </View>
+
+              {/* Header */}
+              <View style={styles.header}>
+                <View>
+                  <Text style={[styles.title, { color: theme.text }]}>Penonton Cerita</Text>
+                  <Text style={[styles.subtitle, { color: theme.description }]}>{totalViews} orang telah melihat</Text>
+                </View>
+                <TouchableOpacity onPress={onClose} style={[styles.closeButton, { backgroundColor: theme.background }]}>
+                  <X size={20} color={theme.text} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Search */}
+              <View style={[styles.searchContainer, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                <Search size={18} color={theme.description} />
+                <TextInput
+                  style={[styles.searchInput, { color: theme.text }]}
+                  placeholder="Cari penonton..."
+                  placeholderTextColor={theme.description}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+              </View>
+
+              {/* Content */}
+              {isLoading ? (
+                <View style={styles.centerContainer}>
+                  <ActivityIndicator size="large" color={theme.tint} />
+                </View>
+              ) : filteredViewers.length > 0 ? (
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                  {filteredViewers.map((viewer, index) => (
+                    <View key={viewer._id || `viewer-${index}`} style={styles.viewerItem}>
+                      <Image 
+                        source={{ uri: getAvatarUrl(viewer, true) }} 
+                        style={styles.avatar} 
+                      />
+                      <View style={styles.viewerInfo}>
+                        <Text style={[styles.viewerName, { color: theme.text }]}>{viewer.nama}</Text>
+                        <Text style={[styles.viewedTime, { color: theme.description }]}>
+                          Melihat pada {new Date(viewer.viewed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                      </View>
+                      <TouchableOpacity style={[styles.followButton, { borderColor: theme.border }]}>
+                        <Text style={[styles.followButtonText, { color: theme.text }]}>Profil</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={styles.centerContainer}>
+                  <Text style={[styles.emptyText, { color: theme.description }]}>
+                    {searchQuery ? 'Tidak ada hasil ditemukan' : 'Belum ada penonton'}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    height: '70%',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  dragHandle: {
+    width: 40,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  subtitle: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 20,
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  viewerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 18,
+    gap: 12,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+  },
+  viewerInfo: {
+    flex: 1,
+  },
+  viewerName: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  viewedTime: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  followButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  followButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 15,
+  }
+});

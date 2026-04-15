@@ -61,7 +61,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     // --- Dynamic Event Listeners ---
     // Mapping events from Backend to our app's lastEvent state
-    const events = ['new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 'notification'];
+    const events = ['new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 'notification', 'delete_post'];
 
     events.forEach(eventType => {
       socket.on(eventType, (data) => {

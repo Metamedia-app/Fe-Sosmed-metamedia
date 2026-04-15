@@ -5,20 +5,26 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'expo-router';
+import PasswordChangeModal from '@/components/PasswordChangeModal';
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const { logout } = useAuth();
   const router = useRouter();
+  const [isPasswordModalVisible, setIsPasswordModalVisible] = React.useState(false);
 
   const handleLogout = () => {
     logout();
     router.replace('/login');
   };
 
-  const SettingItem = ({ icon: Icon, title }: any) => (
-    <TouchableOpacity style={[styles.settingItem, { borderBottomColor: theme.border }]}>
+  const SettingItem = ({ icon: Icon, title, onPress }: any) => (
+    <TouchableOpacity 
+      style={[styles.settingItem, { borderBottomColor: theme.border }]}
+      onPress={onPress}
+      disabled={!onPress}
+    >
       <View style={styles.settingLeft}>
         <Icon size={20} color={theme.icon} style={styles.icon} />
         <Text style={[styles.settingText, { color: theme.text }]}>{title}</Text>
@@ -35,6 +41,11 @@ export default function SettingsScreen() {
           <SettingItem icon={SettingsIcon} title="Pengaturan Akun" />
           <SettingItem icon={Bell} title="Notifikasi" />
           <SettingItem icon={Shield} title="Privasi & Keamanan" />
+          <SettingItem 
+            icon={Shield} 
+            title="Ganti Password" 
+            onPress={() => setIsPasswordModalVisible(true)} 
+          />
         </View>
 
         <View style={[styles.section, { backgroundColor: theme.card }]}>
@@ -54,6 +65,11 @@ export default function SettingsScreen() {
           <Text style={styles.logoutText}>Keluar dari Akun</Text>
         </TouchableOpacity>
       </View>
+
+      <PasswordChangeModal 
+        visible={isPasswordModalVisible} 
+        onClose={() => setIsPasswordModalVisible(false)} 
+      />
     </View>
   );
 }
