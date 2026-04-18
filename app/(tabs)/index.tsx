@@ -14,6 +14,8 @@ import { Story, storyService } from '@/utils/story';
 import CreateStoryModal from '@/components/CreateStoryModal';
 import StoryViewer from '@/components/StoryViewer';
 import StoryViewersModal from '@/components/StoryViewersModal';
+import { subscribeToCommentSync } from '@/utils/commentSyncStore';
+import { BASE_URL } from '@/utils/api';
 
 // No dummy stories needed
 
@@ -114,28 +116,115 @@ export default function HomeScreen() {
     if (lastEvent.timestamp <= lastProcessedEventTime.current) return;
     lastProcessedEventTime.current = lastEvent.timestamp;
 
-    // New post from anyone: prepend to feed
+    // 1. New post from anyone: prepend to feed OR update repost count
     if (lastEvent.type === 'new_post') {
       const newPost: PostData = lastEvent.data?.post ?? lastEvent.data;
-      if (!newPost?._id || newPost.type === 'repost') return;
-      setPosts((prev) => {
-        if (prev.some((p) => p._id === newPost._id)) return prev;
-        return [newPost, ...prev];
-      });
+      if (!newPost?._id) return;
+
+      if (newPost.type === 'repost' && newPost.original_post_id?._id) {
+        // INCREMENT REPOST COUNT ON ORIGINAL: If a new repost event arrives, 
+        // prioritize absolute count from original_post_id object if available.
+        const originalId = newPost.original_post_id._id;
+        const serverRepostCount = newPost.original_post_id.reposts_count;
+        
+        setPosts((prev) =>
+          prev.map((p) => {
+            if (p._id === originalId) {
+              return { ...p, reposts_count: serverRepostCount ?? (p.reposts_count || 0) + 1 };
+            }
+            if (p.type === 'repost' && p.original_post_id?._id === originalId) {
+              return {
+                ...p,
+                original_post_id: { 
+                  ...p.original_post_id, 
+                  reposts_count: serverRepostCount ?? (p.original_post_id.reposts_count || 0) + 1 
+                }
+              };
+            }
+            return p;
+          })
+        );
+      } else if (newPost.type === 'original') {
+        // ADD NEW ORIGINAL POST: Normal feed behavior
+        setPosts((prev) => {
+          if (prev.some((p) => p._id === newPost._id)) return prev;
+          return [newPost, ...prev];
+        });
+      }
     }
 
-    // Like update: sync like count on the relevant post card
+    // 2. Like update: sync like count on the relevant post card
     if (lastEvent.type === 'like_update') {
-      const { post_id, likes_count } = lastEvent.data ?? {};
-      if (!post_id) return;
-      setPosts((prev) =>
-        prev.map((p) =>
-          p._id === post_id ? { ...p, likes_count: likes_count ?? p.likes_count } : p
-        )
-      );
+      const { post_id, postId, id, likes_count, like_count } = lastEvent.data ?? {};
+      const targetId = post_id ?? postId ?? id;
+      const finalLikes = likes_count ?? like_count;
+      if (targetId) {
+        setPosts((prev) =>
+          prev.map((p) => {
+            if (p._id === targetId) return { ...p, likes_count: finalLikes ?? p.likes_count };
+            if (p.type === 'repost' && p.original_post_id?._id === targetId) {
+              return {
+                ...p,
+                original_post_id: { ...p.original_post_id!, likes_count: finalLikes ?? p.original_post_id!.likes_count }
+              };
+            }
+            return p;
+          })
+        );
+      }
     }
 
-    // 4. handle DELETE_POST
+    // 3. New Comment update: sync comments_count on the relevant post card
+    if (lastEvent.type === 'new_comment') {
+      const data = lastEvent.data ?? {};
+      const eventPostId = data.post_id ?? data.postId ?? data.id;
+      // Prioritize absolute count if Backend sends it in the comment event
+      const serverCmtCount = data.comments_count ?? data.total_comments ?? data.comment_count;
+
+      if (eventPostId) {
+        setPosts((prev) =>
+          prev.map((p) => {
+            if (p._id === eventPostId) {
+              return { ...p, comments_count: serverCmtCount ?? (p.comments_count || 0) + 1 };
+            }
+            if (p.type === 'repost' && p.original_post_id?._id === eventPostId) {
+              return {
+                ...p,
+                original_post_id: {
+                  ...p.original_post_id!,
+                  comments_count: serverCmtCount ?? (p.original_post_id!.comments_count || 0) + 1,
+                },
+              };
+            }
+            return p;
+          })
+        );
+      }
+    }
+
+    // 4. Repost update: sync reposts_count on the relevant post card
+    if (lastEvent.type === 'repost_update') {
+      const { post_id, postId, id, reposts_count, count, repost_count } = lastEvent.data ?? {};
+      const targetId = post_id ?? postId ?? id;
+      const finalCount = reposts_count ?? count ?? repost_count;
+
+      if (targetId) {
+        setPosts((prev) =>
+          prev.map((p) => {
+            if (p._id === targetId) return { ...p, reposts_count: finalCount ?? p.reposts_count };
+            if (p.type === 'repost' && p.original_post_id?._id === targetId) {
+              return {
+                ...p,
+                original_post_id: { ...p.original_post_id!, reposts_count: finalCount ?? p.original_post_id!.reposts_count }
+              };
+            }
+            return p;
+          })
+        );
+      }
+    }
+
+    // 5. handle DELETE_POST
     if (lastEvent.type === 'delete_post') {
       const { post_id } = lastEvent.data ?? {};
       if (post_id) {
@@ -165,6 +254,36 @@ export default function HomeScreen() {
       }
     }
   }, [lastEvent]);
+
+  // Global Sync: Listen for local updates from CommentModal/other screens
+  useEffect(() => {
+    const unsubscribe = subscribeToCommentSync((type, id, payload) => {
+      if (type === "POST_STATS_UPDATE") {
+        setPosts((prev) =>
+          prev.map((p) => {
+            const isMatch = p._id === id || (p.type === 'repost' && p.original_post_id?._id === id);
+            if (!isMatch) return p;
+
+            return {
+              ...p,
+              comments_count: payload.comments_count ?? p.comments_count,
+              likes_count: payload.likes_count ?? p.likes_count,
+              reposts_count: payload.reposts_count ?? p.reposts_count,
+              shares_count: payload.shares_count ?? p.shares_count,
+              original_post_id: p.type === 'repost' && p.original_post_id ? {
+                ...p.original_post_id,
+                comments_count: payload.comments_count ?? p.original_post_id.comments_count,
+                likes_count: payload.likes_count ?? p.original_post_id.likes_count,
+                reposts_count: payload.reposts_count ?? p.original_post_id.reposts_count,
+                shares_count: payload.shares_count ?? p.original_post_id.shares_count,
+              } : p.original_post_id
+            };
+          })
+        );
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const handleDeleteSuccess = (postId: string) => {
     setPosts((prev) => prev.filter((p) => p._id !== postId && (p as any).id !== postId));
@@ -317,17 +436,18 @@ export default function HomeScreen() {
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
       ) : (
-        <FlashList<PostData>
-          data={posts}
-          renderItem={({ item }) => (
+        <FlashList
+          data={posts as any}
+          renderItem={({ item }: any) => (
             <PostCard 
               post={item} 
               onDeleteSuccess={() => handleDeleteSuccess(item._id)} 
             />
           )}
+          // @ts-ignore
           estimatedItemSize={350}
           ListHeaderComponent={<StorySection />}
-          ListEmptyComponent={!isLoading ? <EmptyState /> : null}
+          ListEmptyComponent={!isLoading ? EmptyState : (null as any)}
           contentContainerStyle={styles.listContent}
           refreshControl={
             <RefreshControl 

@@ -11,7 +11,7 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { MessageCircle, MoreHorizontal, Repeat, Share2, ThumbsUp } from 'lucide-react-native';
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Alert, Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -186,9 +186,8 @@ export const PostCard = ({
 }) => {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
-  const { token } = useAuth();
+  const { token, user, triggerRefresh } = useAuth();
   const router = useRouter();
-  const { user } = useAuth();
 
   // === REPOST LOGIC ===
   // isRepost: this post object is itself a repost (type='repost')
@@ -253,18 +252,17 @@ export const PostCard = ({
   // Sync commentsCount when post.comments_count changes
   // We use a guard to prevent "jumping back" if the prop is stale but FE already has a newer count
   const lastSyncedPostId = React.useRef(post._id);
-  React.useEffect(() => {
+  // Sync commentsCount when post.comments_count changes
+  useEffect(() => {
     // If modal is open, we trust the modal's internal counting and onCountChange updates
     if (isCommentModalVisible) return;
 
-    if (lastSyncedPostId.current !== post._id) {
-      setCommentsCount(initialCommentCount || 0);
-      lastSyncedPostId.current = post._id;
-    } else if (initialCommentCount !== undefined && initialCommentCount !== commentsCount) {
-      // Sync with prop if modal is closed and there's a mismatch (allows decrease)
+    if (initialCommentCount !== undefined && initialCommentCount !== commentsCount) {
+      // Sync with prop if modal is closed and there's a mismatch
+      // This is now safe because HomeScreen handles real-time socket updates for comments
       setCommentsCount(initialCommentCount);
     }
-  }, [post._id, initialCommentCount, isCommentModalVisible]);
+  }, [initialCommentCount, isCommentModalVisible]);
 
   React.useEffect(() => {
     if (!lastEvent) return;
@@ -272,47 +270,75 @@ export const PostCard = ({
 
     // 1. handle NEW_COMMENT
     if (lastEvent.type === 'new_comment') {
-      const eventPostId = lastEvent.data?.post_id ?? lastEvent.data?.postId;
-      const rawCmt = lastEvent.data?.comment ?? lastEvent.data;
+      const data = lastEvent.data ?? {};
+      const eventPostId = data.post_id ?? data.postId ?? data.id;
+      const rawCmt = data.comment ?? data;
       const commentId = rawCmt?._id;
       
-      if (commentId) {
-        // Remove the block to restore real-time even when modal is open
-        // (processedCommentIds will handle deduplication)
+      if (commentId && eventPostId === post._id && !processedCommentIds.current.has(commentId)) {
+        processedCommentIds.current.add(commentId);
+        
+        // Prioritize absolute count if Backend sends it
+        const serverCmtCount = data.comments_count ?? data.total_comments ?? data.comment_count;
 
-        if (eventPostId === post._id && !processedCommentIds.current.has(commentId)) {
-          processedCommentIds.current.add(commentId);
-          const authorId = rawCmt?.author?._id || rawCmt?.author?.id;
-          const currentUserId = user?._id || user?.id;
-
-          if (authorId !== currentUserId) {
-            setCommentsCount((prev) => prev + 1);
+        // Only update local state if we are NOT using the prop update (to avoid double count)
+        // OR if the modal is open (since modal doesn't see props)
+        if (isCommentModalVisible) {
+          if (serverCmtCount !== undefined) {
+             setCommentsCount(serverCmtCount);
+          } else {
+            const authorId = rawCmt?.author?._id || rawCmt?.author?.id;
+            const currentUserId = user?._id || user?.id;
+            if (authorId !== currentUserId) {
+              setCommentsCount((prev) => prev + 1);
+            }
           }
+        }
+      }
+    }
+
+    // 1b. handle NEW_POST (for repost increments)
+    if (lastEvent.type === 'new_post') {
+      const newPost: PostData = lastEvent.data?.post ?? lastEvent.data;
+      if (newPost?.type === 'repost' && newPost.original_post_id?._id === targetId) {
+        // Prioritize absolute count from the repost event data
+        const serverRepostCount = newPost.original_post_id.reposts_count;
+        if (serverRepostCount !== undefined) {
+          setRepostsCount(serverRepostCount);
+        } else {
+          setRepostsCount((prev) => prev + 1);
         }
       }
     }
 
     // 2. handle LIKE_UPDATE
     if (lastEvent.type === 'like_update') {
-      const { post_id, likes_count } = lastEvent.data;
-      if (post_id === targetId && likes_count !== undefined) {
-        setLikeCount(likes_count);
+      const { post_id, postId, id, likes_count, like_count } = lastEvent.data;
+      const eventPostId = post_id ?? postId ?? id;
+      const finalLikes = likes_count ?? like_count;
+      if (eventPostId === targetId && finalLikes !== undefined) {
+        setLikeCount(finalLikes);
       }
     }
 
     // 3. handle REPOST_UPDATE
     if (lastEvent.type === 'repost_update') {
-      const { post_id, reposts_count } = lastEvent.data;
-      if (post_id === targetId && reposts_count !== undefined) {
-        setRepostsCount(reposts_count);
+      const { post_id, postId, id, reposts_count, count, repost_count } = lastEvent.data;
+      const eventPostId = post_id ?? postId ?? id;
+      const finalCount = reposts_count ?? count ?? repost_count;
+
+      if (eventPostId === targetId && finalCount !== undefined) {
+        setRepostsCount(finalCount);
       }
     }
 
     // 4. handle SHARE_UPDATE
     if (lastEvent.type === 'share_update') {
-      const { post_id, shares_count } = lastEvent.data;
-      if (post_id === targetId && shares_count !== undefined) {
-        setSharesCount(shares_count);
+      const { post_id, postId, id, shares_count, share_count } = lastEvent.data;
+      const eventPostId = post_id ?? postId ?? id;
+      const finalShares = shares_count ?? share_count;
+      if (eventPostId === targetId && finalShares !== undefined) {
+        setSharesCount(finalShares);
       }
     }
   }, [lastEvent, post._id, targetId, user?.id, user?._id, isCommentModalVisible]);
@@ -433,6 +459,9 @@ export const PostCard = ({
         }
         // Confirm state based on what we intended
         setIsReposted(!prevReposted);
+        
+        // Notify other screens (like Profile tab) to re-fetch lists
+        triggerRefresh();
       } else {
         throw new Error(result.message || 'Gagal');
       }

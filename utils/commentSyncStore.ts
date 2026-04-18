@@ -20,7 +20,7 @@ export const recursiveRepliesCache: Record<string, any[]> = {};
 
 // ─── Reactive Store Logic (TikTok-Style) ───────────────────────────────────
 
-type SyncEventType = "COUNT" | "POST_COMMENTS" | "REPLIES_DATA";
+type SyncEventType = "COUNT" | "POST_COMMENTS" | "REPLIES_DATA" | "POST_STATS_UPDATE";
 type SyncListener = (type: SyncEventType, id: string, payload: any) => void;
 
 const listeners = new Set<SyncListener>();
@@ -119,4 +119,15 @@ export const syncRecursiveCount = async (postId: string, topLevelId: string, tok
 export const notifyPostCommentsUpdated = (postId: string, comments: any[]) => {
   postCommentsCache[postId] = comments;
   notifyListeners("POST_COMMENTS", postId, comments);
+};
+/**
+ * Broadcasts an update to post statistics (commentsCount, likesCount, etc.)
+ */
+export const broadcastPostStatsUpdate = (postId: string, stats: { 
+  comments_count?: number; 
+  likes_count?: number; 
+  reposts_count?: number;
+  shares_count?: number;
+}) => {
+  notifyListeners("POST_STATS_UPDATE", postId, stats);
 };

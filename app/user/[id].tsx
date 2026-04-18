@@ -12,6 +12,7 @@ import { Calendar, ChevronLeft, GraduationCap, Grid, Menu, Repeat } from 'lucide
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
+import { subscribeToCommentSync } from '@/utils/commentSyncStore';
 
 export default function UserProfileScreen() {
   const { id, initialName, initialNim, initialAvatar } = useLocalSearchParams<{ 
@@ -155,6 +156,37 @@ export default function UserProfileScreen() {
       }
     }
   }, [lastEvent, id]);
+
+  // Global Sync: Listen for local updates from CommentModal/other screens
+  useEffect(() => {
+    const unsubscribe = subscribeToCommentSync((type, id, payload) => {
+      if (type === "POST_STATS_UPDATE") {
+        const updateList = (list: PostData[]) => list.map((p) => {
+          const isMatch = p._id === id || (p.type === 'repost' && p.original_post_id?._id === id);
+          if (!isMatch) return p;
+
+          return {
+            ...p,
+            comments_count: payload.comments_count ?? p.comments_count,
+            likes_count: payload.likes_count ?? p.likes_count,
+            reposts_count: payload.reposts_count ?? p.reposts_count,
+            shares_count: payload.shares_count ?? p.shares_count,
+            original_post_id: p.type === 'repost' && p.original_post_id ? {
+              ...p.original_post_id,
+              comments_count: payload.comments_count ?? p.original_post_id.comments_count,
+              likes_count: payload.likes_count ?? p.original_post_id.likes_count,
+              reposts_count: payload.reposts_count ?? p.original_post_id.reposts_count,
+              shares_count: payload.shares_count ?? p.original_post_id.shares_count,
+            } : p.original_post_id
+          };
+        });
+
+        setPosts((prev) => updateList(prev));
+        setReposts((prev) => updateList(prev));
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const loadProfile = async () => {
     if (!id || !token) return;

@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { Platform } from 'react-native';
+import { loadGoogleScript, loginRequestWeb } from '@/utils/googleAuth';
 
 type User = {
   id: string;
@@ -46,18 +48,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
+  const WEB_CLIENT_ID = '415448446076-rppbntavevtlk6llvc9j7douo2e4gvq5.apps.googleusercontent.com';
+
   // Configure Google Sign-In
   useEffect(() => {
-    console.log('[GoogleSignin] Configuring...');
-    try {
-      GoogleSignin.configure({
-        webClientId: '415448446076-rppbntavevtlk6llvc9j7douo2e4gvq5.apps.googleusercontent.com',
-        androidClientId: '415448446076-3atspbq1392m5p0rpqt8q0sksoh8qitp.apps.googleusercontent.com',
-        offlineAccess: true,
-      });
-      console.log('[GoogleSignin] Configured successfully ✅');
-    } catch (error) {
-      console.error('[GoogleSignin] Configuration error ❌', error);
+    if (Platform.OS === 'web') {
+      console.log('[GoogleSignin] Web Platform: Loading GIS script...');
+      loadGoogleScript();
+    } else {
+      console.log('[GoogleSignin] Native Platform: Configuring...');
+      try {
+        GoogleSignin.configure({
+          webClientId: WEB_CLIENT_ID,
+          offlineAccess: true,
+        });
+        console.log('[GoogleSignin] Configured successfully ✅');
+      } catch (error) {
+        console.error('[GoogleSignin] Configuration error ❌', error);
+      }
     }
   }, []);
 
@@ -223,9 +231,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const linkGoogle = async () => {
     if (!token) return { success: false, message: 'Harus login dulu untuk menautkan akun' };
     try {
-      await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
-      const idToken = userInfo.data?.idToken;
+      let idToken: string | undefined;
+
+      if (Platform.OS === 'web') {
+        idToken = await loginRequestWeb(WEB_CLIENT_ID);
+      } else {
+        await GoogleSignin.hasPlayServices();
+        const userInfo = await GoogleSignin.signIn();
+        idToken = userInfo.data?.idToken ?? undefined;
+      }
 
       if (!idToken) return { success: false, message: 'Gagal mengambil idToken dari Google' };
 
@@ -258,12 +272,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginWithGoogle = async () => {
     try {
-      await GoogleSignin.hasPlayServices();
-      // Force account picker by signing out first
-      try { await GoogleSignin.signOut(); } catch (e) {}
-      
-      const userInfo = await GoogleSignin.signIn();
-      const idToken = userInfo.data?.idToken;
+      let idToken: string | undefined;
+
+      if (Platform.OS === 'web') {
+        idToken = await loginRequestWeb(WEB_CLIENT_ID);
+      } else {
+        await GoogleSignin.hasPlayServices();
+        // Force account picker by signing out first
+        try { await GoogleSignin.signOut(); } catch (e) {}
+        
+        const userInfo = await GoogleSignin.signIn();
+        idToken = userInfo.data?.idToken ?? undefined;
+      }
 
       if (!idToken) return { success: false, message: 'Gagal mengambil idToken dari Google' };
 

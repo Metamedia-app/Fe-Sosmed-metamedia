@@ -10,15 +10,16 @@ import { getFollowers, getFollowing } from '@/utils/follow';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { Cake, Calendar, GraduationCap, Layout as ListIcon, Heart, MapPin, Repeat, User as UserIcon, Mail } from 'lucide-react-native';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
+import { subscribeToCommentSync } from '@/utils/commentSyncStore';
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
-  const { user, token, refreshProfile, uploadAvatar, deleteAvatar, linkGoogle } = useAuth();
+  const { user, token, refreshProfile, uploadAvatar, deleteAvatar, linkGoogle, refreshSignal } = useAuth();
   const { lastEvent } = useSocket();
   const [activeTab, setActiveTab] = useState<'posts' | 'reposts'>('posts');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -32,18 +33,6 @@ export default function ProfileScreen() {
   const [isPostsLoading, setIsPostsLoading] = useState(false);
 
 
-  useEffect(() => {
-    const loadProfile = async () => {
-      setIsLoadingInitially(true);
-      await Promise.all([
-        refreshProfile(),
-        fetchFollowCounts(),
-        fetchUserContent()
-      ]);
-      setIsLoadingInitially(false);
-    };
-    loadProfile();
-  }, []);
 
   // Anti-duplicate & Anti-stale event tracker
   const lastProcessedEventTime = React.useRef<number>(0);
@@ -140,7 +129,38 @@ export default function ProfileScreen() {
     }
   }, [lastEvent, user?._id]);
 
-  const fetchUserContent = async () => {
+  // Global Sync: Listen for local updates from CommentModal/other screens
+  useEffect(() => {
+    const unsubscribe = subscribeToCommentSync((type, id, payload) => {
+      if (type === "POST_STATS_UPDATE") {
+        const updateList = (list: PostData[]) => list.map((p) => {
+          const isMatch = p._id === id || (p.type === 'repost' && p.original_post_id?._id === id);
+          if (!isMatch) return p;
+
+          return {
+            ...p,
+            comments_count: payload.comments_count ?? p.comments_count,
+            likes_count: payload.likes_count ?? p.likes_count,
+            reposts_count: payload.reposts_count ?? p.reposts_count,
+            shares_count: payload.shares_count ?? p.shares_count,
+            original_post_id: p.type === 'repost' && p.original_post_id ? {
+              ...p.original_post_id,
+              comments_count: payload.comments_count ?? p.original_post_id.comments_count,
+              likes_count: payload.likes_count ?? p.original_post_id.likes_count,
+              reposts_count: payload.reposts_count ?? p.original_post_id.reposts_count,
+              shares_count: payload.shares_count ?? p.original_post_id.shares_count,
+            } : p.original_post_id
+          };
+        });
+
+        setPosts((prev) => updateList(prev));
+        setReposts((prev) => updateList(prev));
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  const fetchUserContent = useCallback(async () => {
     if (!user?._id || !token) return;
     setIsPostsLoading(true);
     try {
@@ -162,7 +182,6 @@ export default function ProfileScreen() {
         ) || []);
       }
       if (repostsRes.ok) {
-        // Filter reposts by type, ensure the user is the one who reposted, and remove duplicates by original_post_id
         const rawReposts = repostsData.data?.posts?.filter((p: any) => 
           p.type === 'repost' && (p.author?._id || p.author?.id) === user?._id
         ) || [];
@@ -184,27 +203,30 @@ export default function ProfileScreen() {
     } finally {
       setIsPostsLoading(false);
     }
-  };
+  }, [user?._id, token]);
 
-
-  const fetchFollowCounts = async () => {
+  const fetchFollowCounts = useCallback(async () => {
     if (!user?._id || !token) return;
     try {
       const [followersRes, followingRes] = await Promise.all([
         getFollowers(user._id, token),
         getFollowing(user._id, token)
       ]);
-      
-      if (followersRes.success) {
-        setFollowersCount(followersRes.data.followers.length);
-      }
-      if (followingRes.success) {
-        setFollowingCount(followingRes.data.following.length);
-      }
+      if (followersRes.success) setFollowersCount(followersRes.data.followers.length);
+      if (followingRes.success) setFollowingCount(followingRes.data.following.length);
     } catch (error) {
       console.error('Error fetching follow counts:', error);
     }
-  };
+  }, [user?._id, token]);
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (posts.length === 0 && reposts.length === 0) setIsLoadingInitially(true);
+      await Promise.all([refreshProfile(), fetchFollowCounts(), fetchUserContent()]);
+      setIsLoadingInitially(false);
+    };
+    loadProfile();
+  }, [refreshSignal, token, fetchUserContent, fetchFollowCounts]);
 
   const onRefresh = async () => {
     setIsRefreshing(true);
