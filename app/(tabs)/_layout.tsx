@@ -1,11 +1,12 @@
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
+import { useSocket } from '@/context/SocketContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Redirect, Tabs, useRouter } from 'expo-router';
 import { Bell, Home, MessageSquare, Search, SquarePlus, User, Menu } from 'lucide-react-native';
 import React from 'react';
-import { Image, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import CreatePostModal from '@/components/CreatePostModal';
 import { useState } from 'react';
 
@@ -14,6 +15,7 @@ export default function TabLayout() {
   const theme = Colors[colorScheme];
   const router = useRouter();
   const { isLoggedIn } = useAuth();
+  const { unreadNotificationsCount } = useSocket();
   const [isCreatePostVisible, setIsCreatePostVisible] = useState(false);
 
   if (!isLoggedIn) {
@@ -62,9 +64,34 @@ export default function TabLayout() {
           headerRight: () => (
             <TouchableOpacity 
               onPress={() => router.push('/notifications')}
-              style={{ marginRight: 15 }}
+              style={{ marginRight: 15, position: 'relative' }}
             >
               <Bell size={28} color="#FFFFFF" />
+              {unreadNotificationsCount > 0 && (
+                <View style={{
+                  position: 'absolute',
+                  top: -4,
+                  right: -4,
+                  backgroundColor: '#FF3B30', // iOS Red
+                  minWidth: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  paddingHorizontal: 4,
+                  borderWidth: 1.5,
+                  borderColor: theme.primary,
+                }}>
+                  <Text style={{ 
+                    color: '#FFFFFF', 
+                    fontSize: 10, 
+                    fontWeight: 'bold',
+                    textAlign: 'center' 
+                  }}>
+                    {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           ),
           tabBarStyle: {

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "415448446076",
+    "project_id": "besosmed-5054b",
+    "storage_bucket": "besosmed-5054b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:415448446076:android:6672faf7556e2baeadc5f9",
+        "android_client_info": {
+          "package_name": "com.anonymous.Fe_Sosmed_metamedia"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "415448446076-3atspbq1392m5p0rpqt8q0sksoh8qitp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.anonymous.Fe_Sosmed_metamedia",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "415448446076-rppbntavevtlk6llvc9j7douo2e4gvq5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDRuXdhNnYWjGmUyb6wuGSKct39kJaqbgI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "415448446076-rppbntavevtlk6llvc9j7douo2e4gvq5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

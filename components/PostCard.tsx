@@ -12,7 +12,7 @@ import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { MessageCircle, MoreHorizontal, Repeat, Share2, ThumbsUp } from 'lucide-react-native';
 import React, { useState } from 'react';
-import { Alert, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -173,7 +173,17 @@ const OriginalPostBlock = React.memo(({ originalPost, theme, onAuthorPress }: {
   );
 });
 
-export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSuccess?: () => void }) => {
+export const PostCard = ({ 
+  post, 
+  onDeleteSuccess, 
+  initialShowComments = false,
+  targetCommentId
+}: { 
+  post: PostData; 
+  onDeleteSuccess?: () => void;
+  initialShowComments?: boolean;
+  targetCommentId?: string;
+}) => {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const { token } = useAuth();
@@ -207,7 +217,7 @@ export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSu
   const [repostsCount, setRepostsCount] = useState(initialRepostCount || 0);
   const [isLiked, setIsLiked] = useState(post.is_liked || false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [isCommentModalVisible, setIsCommentModalVisible] = useState(false);
+  const [isCommentModalVisible, setIsCommentModalVisible] = useState(initialShowComments);
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [isActionModalVisible, setIsActionModalVisible] = useState(false);
@@ -244,13 +254,17 @@ export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSu
   // We use a guard to prevent "jumping back" if the prop is stale but FE already has a newer count
   const lastSyncedPostId = React.useRef(post._id);
   React.useEffect(() => {
+    // If modal is open, we trust the modal's internal counting and onCountChange updates
+    if (isCommentModalVisible) return;
+
     if (lastSyncedPostId.current !== post._id) {
       setCommentsCount(initialCommentCount || 0);
       lastSyncedPostId.current = post._id;
-    } else if (initialCommentCount !== undefined && initialCommentCount > commentsCount) {
+    } else if (initialCommentCount !== undefined && initialCommentCount !== commentsCount) {
+      // Sync with prop if modal is closed and there's a mismatch (allows decrease)
       setCommentsCount(initialCommentCount);
     }
-  }, [post._id, initialCommentCount]);
+  }, [post._id, initialCommentCount, isCommentModalVisible]);
 
   React.useEffect(() => {
     if (!lastEvent) return;
@@ -263,10 +277,8 @@ export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSu
       const commentId = rawCmt?._id;
       
       if (commentId) {
-        if (isCommentModalVisible) {
-          processedCommentIds.current.add(commentId);
-          return;
-        }
+        // Remove the block to restore real-time even when modal is open
+        // (processedCommentIds will handle deduplication)
 
         if (eventPostId === post._id && !processedCommentIds.current.has(commentId)) {
           processedCommentIds.current.add(commentId);
@@ -461,31 +473,29 @@ export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSu
   };
 
   const confirmDelete = () => {
-    Alert.alert(
-      'Hapus Postingan',
-      'Apakah Anda yakin ingin menghapus postingan ini? Tindakan ini tidak dapat dibatalkan.',
-      [
-        { text: 'Batal', style: 'cancel' },
-        { 
-          text: 'Hapus', 
-          style: 'destructive', 
-          onPress: handleDelete 
-        }
-      ]
-    );
+    // Confirmation removed for instant experience
+    handleDelete();
   };
 
   const handleDelete = async () => {
     if (!token) return;
-    setIsDeleting(true);
-    const res = await deletePost(post._id, token);
-    setIsDeleting(false);
     
-    if (res.success) {
-      Alert.alert('Berhasil', res.message || 'Postingan berhasil dihapus.');
-      onDeleteSuccess?.();
-    } else {
-      Alert.alert('Gagal', res.message || 'Gagal menghapus postingan.');
+    const postId = post._id || (post as any).id;
+    if (!postId) return;
+
+    setIsDeleting(true);
+    try {
+      const res = await deletePost(postId, token);
+      if (res.success) {
+        // Success: Trigger callback immediately without Alert
+        if (onDeleteSuccess) {
+          onDeleteSuccess();
+        }
+      }
+    } catch (error) {
+      console.error('[DELETE] Unexpected Error:', error);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -700,6 +710,7 @@ export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSu
         postId={post._id}
         initialCommentsCount={commentsCount}
         onCountChange={(count) => setCommentsCount(count)}
+        targetCommentId={targetCommentId}
       />
 
       <ShareModal
@@ -719,9 +730,22 @@ export const PostCard = ({ post, onDeleteSuccess }: { post: PostData; onDeleteSu
       <PostActionModal 
         isVisible={isActionModalVisible}
         onClose={() => setIsActionModalVisible(false)}
-        isOwner={(post.author?._id || post.author?.id || post.author) === (user?._id || user?.id)}
+        isOwner={(() => {
+          // Normalize IDs to strings for comparison
+          const authorId = String(post.author?._id || post.author?.id || (typeof post.author === 'string' ? post.author : ''));
+          const currentUserId = String(user?._id || user?.id || '');
+          const match = authorId === currentUserId && currentUserId !== '';
+          
+          if (isActionModalVisible) {
+            console.log(`[OWNER CHECK] Author: "${authorId}", Me: "${currentUserId}", Match: ${match}`);
+          }
+          return match;
+        })()}
         onEdit={() => setIsEditModalVisible(true)}
-        onDelete={confirmDelete}
+        onDelete={() => {
+          console.log(`[ACTION] Delete clicked for: ${post._id}`);
+          confirmDelete();
+        }}
         onReport={() => Alert.alert('Info', 'Terima kasih, laporan Anda telah diterima.')}
         onCopyLink={() => Alert.alert('Berhasil', 'Tautan berhasil disalin!')}
       />

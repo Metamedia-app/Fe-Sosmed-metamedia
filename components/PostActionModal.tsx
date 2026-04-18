@@ -58,8 +58,9 @@ export default function PostActionModal({
   }, [isVisible]);
 
   const handleAction = (callback: () => void) => {
+    // Call callback first, then close to ensure the parent state is still active
+    callback();
     onClose();
-    setTimeout(callback, 300);
   };
 
   return (
@@ -100,12 +101,16 @@ export default function PostActionModal({
 
                     <TouchableOpacity 
                       style={styles.optionItem} 
-                      onPress={() => handleAction(onDelete)}
+                      onPress={() => {
+                        console.log('[PostActionModal] Delete button pressed');
+                        handleAction(onDelete);
+                      }}
+                      activeOpacity={0.7}
                     >
                       <View style={[styles.iconBg, { backgroundColor: '#FFEBEE' }]}>
-                        <Trash2 size={20} color="#D32F2F" />
+                        <X size={20} color="#F44336" />
                       </View>
-                      <Text style={[styles.optionText, { color: '#D32F2F' }]}>Hapus Postingan</Text>
+                      <Text style={[styles.optionText, { color: '#F44336' }]}>Hapus Postingan</Text>
                     </TouchableOpacity>
                   </>
                 ) : (

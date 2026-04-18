@@ -33,9 +33,10 @@ export const getAvatarUrl = (
     return path;
   }
 
-  // 3. Fallback to Iranian Liara avatars
-  // We use encodeURIComponent to handle spaces in names correctly
-  const encodedName = encodeURIComponent(name);
-  const type = isPostAuthor ? "boy" : "girl"; // Default fallback logic
-  return `https://avatar.iran.liara.run/public/${type}?username=${encodedName}`;
+  // 3. Fallback to a clean Instagram-style silhouette
+  // Using a reliable CDN URL as Data URIs can be inconsistent on some native mobile environments
+  // This "Mystery Person" silhouette is standard and works perfectly on all platforms.
+  const DEFAULT_AVATAR = "https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y";
+  
+  return DEFAULT_AVATAR;
 };

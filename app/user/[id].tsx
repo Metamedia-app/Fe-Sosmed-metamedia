@@ -47,6 +47,10 @@ export default function UserProfileScreen() {
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [isFetchingDetail, setIsFetchingDetail] = useState(false);
 
+  // Anti-duplicate & Anti-stale event tracker
+  const lastProcessedEventTime = React.useRef<number>(0);
+  const mountTime = React.useRef<number>(Date.now());
+
   useEffect(() => {
     if (id === currentUser?._id) {
       router.replace('/profile');
@@ -58,6 +62,13 @@ export default function UserProfileScreen() {
   // Real-time socket listener
   useEffect(() => {
     if (!lastEvent || !id) return;
+
+    // Guard 1: Prevent processing events that happened before this screen was opened
+    if (lastEvent.timestamp < mountTime.current) return;
+
+    // Guard 2: Prevent re-processing the same event (Anti-Jumping)
+    if (lastEvent.timestamp <= lastProcessedEventTime.current) return;
+    lastProcessedEventTime.current = lastEvent.timestamp;
 
     // 1. New Post/Repost from this user
     if (lastEvent.type === 'new_post') {
@@ -113,6 +124,34 @@ export default function UserProfileScreen() {
       if (post_id) {
         setPosts(prev => prev.filter(p => p._id !== post_id));
         setReposts(prev => prev.filter(p => p._id !== post_id));
+      }
+    }
+
+    // 4. Follow Updates
+    if (lastEvent.type === 'follow_update') {
+      const { follower_id, following_id, followers_count, following_count, type } = lastEvent.data;
+      
+      // If someone followed/unfollowed the user whose profile we are viewing
+      if (following_id === id) {
+        if (typeof followers_count === 'number') {
+          setFollowersCount(followers_count);
+        } else {
+          fetchData();
+        }
+
+        // If the person performing the action is the currently logged-in user
+        if (follower_id === currentUser?._id) {
+          setIsFollowing(type === 'follow');
+        }
+      }
+
+      // If the user whose profile we are viewing followed/unfollowed someone else
+      if (follower_id === id) {
+        if (typeof following_count === 'number') {
+          setFollowingCount(following_count);
+        } else {
+          fetchData();
+        }
       }
     }
   }, [lastEvent, id]);
@@ -237,7 +276,7 @@ export default function UserProfileScreen() {
     
     if (res.success) {
       setIsFollowing(!isFollowing);
-      setFollowersCount(prev => isFollowing ? prev - 1 : prev + 1);
+      // Removed manual setFollowersCount update to prevent duplication with socket event
     } else {
       Alert.alert('Gagal', res.message || 'Terjadi kesalahan');
     }
@@ -489,6 +528,13 @@ export default function UserProfileScreen() {
           setSelectedPost(null);
         }}
         post={selectedPost}
+        onDeleteSuccess={() => {
+          if (selectedPost) {
+            const postId = selectedPost._id || (selectedPost as any).id;
+            setPosts(prev => prev.filter(p => p._id !== postId && (p as any).id !== postId));
+            setReposts(prev => prev.filter(p => p._id !== postId && (p as any).id !== postId));
+          }
+        }}
       />
 
       {/* Loading overlay when fetching detail */}

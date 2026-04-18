@@ -10,7 +10,7 @@ export default function LoginScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
 
   const [nim, setNim] = useState('');
   const [password, setPassword] = useState('');
@@ -84,6 +84,24 @@ export default function LoginScreen() {
     } catch (error) {
       console.error('Login error:', error);
       setErrorMessage('Gagal menghubungkan ke server. Periksa koneksi internet Anda.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      const response = await loginWithGoogle();
+      if (response.success) {
+        router.replace('/(tabs)');
+      } else {
+        setErrorMessage(response.message || 'Gagal login dengan Google');
+      }
+    } catch (error) {
+      console.error('Google login catch:', error);
+      setErrorMessage('Terjadi kesalahan saat login Google');
     } finally {
       setIsLoading(false);
     }
@@ -182,6 +200,29 @@ export default function LoginScreen() {
                 </Text>
               </>
             )}
+          </TouchableOpacity>
+
+          <View style={styles.dividerContainer}>
+            <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+            <Text style={[styles.dividerText, { color: theme.description }]}>Atau</Text>
+            <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+          </View>
+
+          <TouchableOpacity 
+            style={[
+              styles.googleButton, 
+              { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1 }
+            ]}
+            onPress={handleGoogleLogin}
+            disabled={isLoading || countdown > 0}
+          >
+            <Image 
+              source={{ uri: 'https://img.icons8.com/color/48/000000/google-logo.png' }} 
+              style={styles.googleIcon} 
+            />
+            <Text style={[styles.googleButtonText, { color: theme.text }]}>
+              Masuk dengan Google
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -302,5 +343,40 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     fontVariant: ['tabular-nums'],
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  dividerText: {
+    marginHorizontal: 15,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  googleButton: {
+    height: 55,
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  googleIcon: {
+    width: 24,
+    height: 24,
+    marginRight: 12,
+  },
+  googleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

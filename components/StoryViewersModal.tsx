@@ -1,5 +1,6 @@
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
+import { useSocket } from '@/context/SocketContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { storyService, Viewer } from '@/utils/story';
 import { Image } from 'expo-image';
@@ -28,6 +29,7 @@ export default function StoryViewersModal({ isVisible, storyId, onClose }: Story
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const { token } = useAuth();
+  const { lastEvent } = useSocket();
   
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [totalViews, setTotalViews] = useState(0);
@@ -43,6 +45,27 @@ export default function StoryViewersModal({ isVisible, storyId, onClose }: Story
       setSearchQuery('');
     }
   }, [isVisible, storyId]);
+
+  // Real-time socket listener for new viewers
+  useEffect(() => {
+    if (!lastEvent || !isVisible || !storyId) return;
+
+    if (lastEvent.type === 'story_view_update') {
+      const { story_id, views_count, viewer } = lastEvent.data ?? {};
+      if (story_id === storyId) {
+        if (typeof views_count === 'number') {
+          setTotalViews(views_count);
+        }
+        if (viewer) {
+          setViewers(prev => {
+            // Avoid duplicates
+            if (prev.some(v => (v._id || (v as any).id) === (viewer._id || viewer.id))) return prev;
+            return [viewer, ...prev];
+          });
+        }
+      }
+    }
+  }, [lastEvent, isVisible, storyId]);
 
   const fetchViewers = async () => {
     if (!storyId || !token) return;

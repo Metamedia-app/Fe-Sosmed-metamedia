@@ -1,6 +1,5 @@
 import EditProfileModal from '@/components/EditProfileModal';
-import { PostData } from '@/components/PostCard';
-import { PostDetailModal } from '@/components/PostDetailModal';
+import { PostCard, PostData } from '@/components/PostCard';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
@@ -10,7 +9,7 @@ import { getAvatarUrl } from '@/utils/avatar';
 import { getFollowers, getFollowing } from '@/utils/follow';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { Cake, Calendar, GraduationCap, Grid, Heart, MapPin, Repeat, User as UserIcon } from 'lucide-react-native';
+import { Cake, Calendar, GraduationCap, Layout as ListIcon, Heart, MapPin, Repeat, User as UserIcon, Mail } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
@@ -19,7 +18,7 @@ export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
-  const { user, token, refreshProfile, uploadAvatar, deleteAvatar } = useAuth();
+  const { user, token, refreshProfile, uploadAvatar, deleteAvatar, linkGoogle } = useAuth();
   const { lastEvent } = useSocket();
   const [activeTab, setActiveTab] = useState<'posts' | 'reposts'>('posts');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -31,9 +30,7 @@ export default function ProfileScreen() {
   const [posts, setPosts] = useState<PostData[]>([]);
   const [reposts, setReposts] = useState<PostData[]>([]);
   const [isPostsLoading, setIsPostsLoading] = useState(false);
-  const [selectedPost, setSelectedPost] = useState<PostData | null>(null);
-  const [isDetailVisible, setIsDetailVisible] = useState(false);
-  const [isFetchingDetail, setIsFetchingDetail] = useState(false);
+
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -48,9 +45,19 @@ export default function ProfileScreen() {
     loadProfile();
   }, []);
 
-  // Real-time socket listener
+  // Anti-duplicate & Anti-stale event tracker
+  const lastProcessedEventTime = React.useRef<number>(0);
+  const mountTime = React.useRef<number>(Date.now());
+
   useEffect(() => {
     if (!lastEvent || !user?._id) return;
+
+    // Guard 1: Prevent processing events that happened before this screen was opened
+    if (lastEvent.timestamp < mountTime.current) return;
+
+    // Guard 2: Prevent re-processing the same event (Anti-Jumping)
+    if (lastEvent.timestamp <= lastProcessedEventTime.current) return;
+    lastProcessedEventTime.current = lastEvent.timestamp;
 
     // 1. New Post/Repost from me
     if (lastEvent.type === 'new_post') {
@@ -108,6 +115,29 @@ export default function ProfileScreen() {
         setReposts(prev => prev.filter(p => p._id !== post_id));
       }
     }
+
+    // 4. Follow Updates
+    if (lastEvent.type === 'follow_update') {
+      const { follower_id, following_id, followers_count, following_count } = lastEvent.data;
+      
+      // If someone followed/unfollowed ME
+      if (following_id === user._id) {
+        if (typeof followers_count === 'number') {
+          setFollowersCount(followers_count);
+        } else {
+          fetchFollowCounts();
+        }
+      }
+      
+      // If I followed/unfollowed SOMEONE
+      if (follower_id === user._id) {
+        if (typeof following_count === 'number') {
+          setFollowingCount(following_count);
+        } else {
+          fetchFollowCounts();
+        }
+      }
+    }
   }, [lastEvent, user?._id]);
 
   const fetchUserContent = async () => {
@@ -156,44 +186,6 @@ export default function ProfileScreen() {
     }
   };
 
-  /**
-   * For repost items: fetch the ORIGINAL post from server to get accurate 
-   * counts (likes, comments, reposts) and correct is_reposted flag.
-   * Then open the detail modal with the data.
-   */
-  const openRepostDetail = async (repostPost: PostData) => {
-    const originalId = repostPost.original_post_id?._id;
-    if (!originalId || !token) {
-      setSelectedPost(repostPost);
-      setIsDetailVisible(true);
-      return;
-    }
-    setIsFetchingDetail(true);
-    try {
-      const res = await fetch(`${BASE_URL}/posts/${originalId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const result = await res.json();
-      if (res.ok && result.data?.post) {
-        // We show the original post directly in the detail modal.
-        // The PostCard for an original post will show is_reposted = true
-        // because current user has already reposted it.
-        const originalPost: PostData = {
-          ...result.data.post,
-          is_reposted: true, // User owns this repost, so they've already reposted
-        };
-        setSelectedPost(originalPost);
-      } else {
-        // Fallback to repost data
-        setSelectedPost(repostPost);
-      }
-    } catch {
-      setSelectedPost(repostPost);
-    } finally {
-      setIsFetchingDetail(false);
-      setIsDetailVisible(true);
-    }
-  };
 
   const fetchFollowCounts = async () => {
     if (!user?._id || !token) return;
@@ -323,6 +315,29 @@ export default function ProfileScreen() {
     );
   };
 
+  const handleLinkGoogle = async () => {
+    Alert.alert(
+      'Tautkan Google',
+      'Hubungkan akun Google Anda agar bisa login lebih mudah nantinya.',
+      [
+        { text: 'Batal', style: 'cancel' },
+        { 
+          text: 'Tautkan SEKARANG', 
+          onPress: async () => {
+            setIsLoadingInitially(true);
+            const response = await linkGoogle();
+            setIsLoadingInitially(false);
+            if (response.success) {
+              Alert.alert('Berhasil', response.message);
+            } else {
+              Alert.alert('Gagal', response.message);
+            }
+          }
+        }
+      ]
+    );
+  };
+
 
   if (isLoadingInitially) {
     return (
@@ -424,6 +439,30 @@ export default function ProfileScreen() {
             </View>
           </View>
         </View>
+
+        <TouchableOpacity 
+          style={[
+            styles.infoItem, 
+            { borderTopWidth: 1, borderTopColor: theme.border + '30', paddingTop: 15, marginTop: 5 },
+            user?.email ? { opacity: 0.8 } : null
+          ]}
+          onPress={user?.email ? undefined : handleLinkGoogle}
+          disabled={!!user?.email}
+          activeOpacity={user?.email ? 1 : 0.7}
+        >
+          <Mail size={20} color={user?.email ? "#4CAF50" : "#EA4335"} />
+          <View style={styles.infoTextContainer}>
+            <Text style={[styles.infoLabel, { color: theme.description }]}>Google Auth</Text>
+            <Text style={[styles.infoValue, { color: theme.text }]}>
+              {user?.email ? user.email : 'Tautkan Akun Google'}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: user?.email ? '#4CAF5020' : '#EA433520' }]}>
+            <Text style={[styles.statusText, { color: user?.email ? '#4CAF50' : '#EA4335' }]}>
+              {user?.email ? 'VERIFIED' : 'LINK'}
+            </Text>
+          </View>
+        </TouchableOpacity>
       </View>
 
       {/* Personal Details Card */}
@@ -470,7 +509,7 @@ export default function ProfileScreen() {
             style={[styles.tabItem, activeTab === 'posts' && { borderBottomColor: theme.tint, borderBottomWidth: 2 }]}
             onPress={() => setActiveTab('posts')}
           >
-            <Grid size={20} color={activeTab === 'posts' ? theme.tint : theme.description} />
+            <ListIcon size={20} color={activeTab === 'posts' ? theme.tint : theme.description} />
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.tabItem, activeTab === 'reposts' && { borderBottomColor: theme.tint, borderBottomWidth: 2 }]}
@@ -484,47 +523,23 @@ export default function ProfileScreen() {
       {/* Feed Content */}
       <View style={{ backgroundColor: theme.background }}>
         
-        {/* Posts/Reposts Grid */}
+        {/* Posts/Reposts List */}
         {isPostsLoading ? (
           <View style={{ padding: 40, alignItems: 'center' }}>
             <ActivityIndicator color={theme.tint} />
           </View>
         ) : (
-          <View style={styles.gridContainer}>
+          <View style={styles.listContainer}>
             {activeTab === 'posts' ? (
               posts.length > 0 ? (
                 posts.map((post) => (
-                  <TouchableOpacity 
+                  <PostCard 
                     key={post._id} 
-                    style={[styles.gridItem, { backgroundColor: theme.background }]}
-                    onPress={() => {
-                      setSelectedPost(post);
-                      setIsDetailVisible(true);
+                    post={post}
+                    onDeleteSuccess={() => {
+                      setPosts(prev => prev.filter(p => p._id !== post._id));
                     }}
-                  >
-                    {post.media && post.media.length > 0 ? (
-                      <Image 
-                        source={{ uri: post.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (post.type === 'repost' && post.original_post_id?.media && post.original_post_id.media.length > 0) ? (
-                      <Image 
-                        source={{ uri: post.original_post_id.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={{ flex: 1, backgroundColor: theme.border, justifyContent: 'center', alignItems: 'center' }}>
-                         <Text style={{ color: theme.description, fontSize: 10 }}>No Media</Text>
-                      </View>
-                    )}
-                    {post.type === 'repost' && (
-                      <View style={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 4 }}>
-                         <Repeat size={12} color="#FFF" />
-                      </View>
-                    )}
-                  </TouchableOpacity>
+                  />
                 ))
               ) : (
                 <View style={styles.emptyContainer}>
@@ -534,32 +549,13 @@ export default function ProfileScreen() {
             ) : (
               reposts.length > 0 ? (
                 reposts.map((post) => (
-                  <TouchableOpacity 
+                  <PostCard 
                     key={post._id} 
-                    style={[styles.gridItem, { backgroundColor: theme.background }]}
-                    onPress={() => openRepostDetail(post)}
-                  >
-                    {post.media && post.media.length > 0 ? (
-                      <Image 
-                        source={{ uri: post.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (post.type === 'repost' && post.original_post_id?.media && post.original_post_id.media.length > 0) ? (
-                      <Image 
-                        source={{ uri: post.original_post_id.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={{ flex: 1, backgroundColor: theme.border, justifyContent: 'center', alignItems: 'center' }}>
-                         <Text style={{ color: theme.description, fontSize: 10 }}>No Media</Text>
-                      </View>
-                    )}
-                    <View style={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 4 }}>
-                       <Repeat size={12} color="#FFF" />
-                    </View>
-                  </TouchableOpacity>
+                    post={post}
+                    onDeleteSuccess={() => {
+                      setReposts(prev => prev.filter(p => p._id !== post._id));
+                    }}
+                  />
                 ))
               ) : (
                 <View style={styles.emptyContainer}>
@@ -575,26 +571,6 @@ export default function ProfileScreen() {
         isVisible={isEditModalVisible} 
         onClose={() => setIsEditModalVisible(false)} 
       />
-
-      <PostDetailModal 
-        isVisible={isDetailVisible}
-        onClose={() => {
-          setIsDetailVisible(false);
-          setSelectedPost(null);
-        }}
-        post={selectedPost}
-      />
-
-      {/* Loading overlay when fetching detail */}
-      {isFetchingDetail && (
-        <View style={{
-          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          justifyContent: 'center', alignItems: 'center', zIndex: 999
-        }}>
-          <ActivityIndicator size="large" color="#FFF" />
-        </View>
-      )}
     </ScrollView>
   );
 }
@@ -734,16 +710,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 15,
   },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 1,
-  },
-  gridItem: {
-    width: '33.33%',
-    aspectRatio: 1,
-    borderWidth: 0.5,
-    padding: 1,
+  listContainer: {
+    paddingBottom: 20,
   },
   loadingContainer: {
     flex: 1,

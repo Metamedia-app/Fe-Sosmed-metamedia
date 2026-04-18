@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>WS Test — Metamedia</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+    h2 { color: #58a6ff; margin-bottom: 16px; }
+    .row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+    input { background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 12px; border-radius: 6px; font-size: 14px; flex: 1; min-width: 180px; }
+    button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    button:hover { background: #2ea043; }
+    button.red { background: #da3633; }
+    button.blue { background: #1f6feb; }
+    #log { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; height: 420px; overflow-y: auto; font-size: 13px; line-height: 1.7; margin-top: 16px; }
+    .ok { color: #3fb950; }
+    .err { color: #f85149; }
+    .info { color: #79c0ff; }
+    .event { color: #e3b341; }
+    .dim { color: #6e7681; }
+    #status { font-size: 13px; margin-top: 8px; }
+    label { font-size: 12px; color: #8b949e; margin-bottom: 4px; display: block; }
+  </style>
+</head>
+<body>
+  <h2>🔌 Metamedia WebSocket Real-time Tester</h2>
+
+  <div class="row">
+    <div style="flex:1">
+      <label>NIM</label>
+      <input id="nim" placeholder="Contoh: 2024XXXXX" />
+    </div>
+    <div style="flex:1">
+      <label>Password</label>
+      <input id="pass" type="password" placeholder="Password kamu" />
+    </div>
+    <div style="align-self:flex-end">
+      <button onclick="doLogin()">Login & Connect WS</button>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:4px">
+    <button class="blue" onclick="sendPing()">Ping WS</button>
+    <button class="blue" onclick="postTestComment()">Kirim Komentar Test</button>
+    <button class="red" onclick="disconnect()">Disconnect</button>
+    <button onclick="clearLog()">Clear Log</button>
+  </div>
+
+  <div id="status">Status: <span style="color:#6e7681">Belum terhubung</span></div>
+  <div id="log"><span class="dim">Log akan muncul di sini...</span></div>
+
+  <script>
+    const BASE = 'https://besosmed-production.up.railway.app/api/v1';
+    let ws = null;
+    let token = null;
+    let firstPostId = null;
+
+    function log(msg, cls = '') {
+      const div = document.getElementById('log');
+      const ts = new Date().toLocaleTimeString('id-ID');
+      div.innerHTML += `<div class="${cls}">[${ts}] ${msg}</div>`;
+      div.scrollTop = div.scrollHeight;
+    }
+
+    function setStatus(msg, color = '#c9d1d9') {
+      document.getElementById('status').innerHTML = `Status: <span style="color:${color}">${msg}</span>`;
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = '';
+    }
+
+    async function doLogin() {
+      const nim = document.getElementById('nim').value.trim();
+      const pass = document.getElementById('pass').value.trim();
+      if (!nim || !pass) { log('⚠️ Isi NIM dan Password dulu!', 'err'); return; }
+
+      log(`🔐 Login dengan NIM: ${nim}...`, 'info');
+      try {
+        const res = await fetch(`${BASE}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nim, password: pass })
+        });
+        const data = await res.json();
+        log(`Login response: <code>${JSON.stringify(data).substring(0, 300)}</code>`, res.ok ? 'ok' : 'err');
+
+        if (!res.ok) { log('❌ Login gagal: ' + (data.message || 'Unknown error'), 'err'); return; }
+
+        token = data.data?.token || data.data?.access_token || data.token;
+        if (!token) { log('❌ Token tidak ditemukan di response! Keys: ' + Object.keys(data.data || data).join(', '), 'err'); return; }
+
+        log('✅ Login berhasil! Token didapat.', 'ok');
+
+        // Fetch a post to use for comment test
+        const pRes = await fetch(`${BASE}/posts`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+        const pData = await pRes.json();
+        firstPostId = pData.data?.posts?.[0]?._id;
+        if (firstPostId) {
+          log(`📄 Post pertama ditemukan: ${firstPostId}`, 'info');
+        } else {
+          log('⚠️ Tidak ada post ditemukan untuk test komentar', 'err');
+        }
+
+        connectWS();
+      } catch (e) {
+        log('❌ Error: ' + e.message, 'err');
+      }
+    }
+
+    function connectWS() {
+      if (!token) { log('❌ Tidak ada token!', 'err'); return; }
+      if (ws) { ws.close(); }
+
+      const url = `wss://besosmed-production.up.railway.app/api/v1/ws?token=${token}`;
+      log(`🔌 Connecting ke: ${url.substring(0, 80)}...`, 'info');
+      setStatus('Connecting...', '#e3b341');
+
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        log('✅ WebSocket CONNECTED! Mengirim ping...', 'ok');
+        setStatus('Connected ✅', '#3fb950');
+        ws.send(JSON.stringify({ type: 'ping' }));
+      };
+
+      ws.onmessage = (e) => {
+        log(`📨 EVENT DITERIMA: <code style="background:#0d1117;padding:2px 6px;border-radius:4px">${e.data}</code>`, 'event');
+        try {
+          const parsed = JSON.parse(e.data);
+          log(`   ↳ type: <b>${parsed.type}</b> | data keys: ${Object.keys(parsed.data || {}).join(', ')}`, 'event');
+        } catch(_) {}
+      };
+
+      ws.onerror = (e) => {
+        log('❌ WebSocket ERROR! Lihat console browser untuk detail.', 'err');
+        setStatus('Error ❌', '#f85149');
+        console.error('WS Error:', e);
+      };
+
+      ws.onclose = (e) => {
+        log(`🔌 WebSocket CLOSED. Code: ${e.code} | Reason: "${e.reason || '-'}"`, 'err');
+        setStatus('Disconnected', '#6e7681');
+        // Code 1000=normal, 1006=abnormal (server rejected), 1008=policy violation (bad token)
+        if (e.code === 1006) log('   ↳ Code 1006 = server tutup koneksi tanpa reason. Kemungkinan token invalid atau endpoint salah.', 'err');
+        if (e.code === 1008) log('   ↳ Code 1008 = Policy Violation. Token ditolak server.', 'err');
+      };
+    }
+
+    function sendPing() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) { log('❌ WS tidak terhubung!', 'err'); return; }
+      ws.send(JSON.stringify({ type: 'ping' }));
+      log('→ Sent ping', 'dim');
+    }
+
+    async function postTestComment() {
+      if (!token) { log('❌ Login dulu!', 'err'); return; }
+      if (!firstPostId) { log('❌ Tidak ada post untuk dikomentari!', 'err'); return; }
+      const body = 'Test realtime comment ' + Date.now();
+      log(`💬 Posting komentar: "${body}"...`, 'info');
+      try {
+        const res = await fetch(`${BASE}/posts/${firstPostId}/comments`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ body })
+        });
+        const data = await res.json();
+        log(`POST /comments response: <code>${JSON.stringify(data).substring(0, 400)}</code>`, res.ok ? 'ok' : 'err');
+        if (res.ok) {
+          log('✅ Komentar terkirim ke DB. Tunggu 3 detik apakah WS menerima event new_comment...', 'ok');
+          log('   ↳ result.data keys: ' + Object.keys(data.data || {}).join(', '), 'dim');
+          log('   ↳ result.data._id: ' + (data.data?._id || '❌ undefined — cek result.data.comment?'), 'dim');
+          log('   ↳ result.data.comment: ' + JSON.stringify(data.data?.comment || 'tidak ada').substring(0, 150), 'dim');
+        }
+      } catch(e) {
+        log('❌ Error posting comment: ' + e.message, 'err');
+      }
+    }
+
+    function disconnect() {
+      if (ws) { ws.close(); ws = null; }
+      log('🔌 Disconnected manual', 'dim');
+      setStatus('Disconnected', '#6e7681');
+    }
+  </script>
+</body>
+</html>

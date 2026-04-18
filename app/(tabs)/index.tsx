@@ -36,6 +36,10 @@ export default function HomeScreen() {
   const [isViewersVisible, setIsViewersVisible] = useState(false);
   const [selectedStoryGroup, setSelectedStoryGroup] = useState<Story[]>([]);
   const [activeStoryIdForViewers, setActiveStoryIdForViewers] = useState<string | null>(null);
+  
+  // Anti-duplicate & Anti-stale event tracker
+  const lastProcessedEventTime = React.useRef<number>(0);
+  const mountTime = React.useRef<number>(Date.now());
 
   const fetchStories = useCallback(async () => {
     if (!token) return;
@@ -103,6 +107,13 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!lastEvent) return;
 
+    // Guard 1: Prevent processing events that happened before this screen was opened
+    if (lastEvent.timestamp < mountTime.current) return;
+
+    // Guard 2: Prevent re-processing the same event (Anti-Jumping)
+    if (lastEvent.timestamp <= lastProcessedEventTime.current) return;
+    lastProcessedEventTime.current = lastEvent.timestamp;
+
     // New post from anyone: prepend to feed
     if (lastEvent.type === 'new_post') {
       const newPost: PostData = lastEvent.data?.post ?? lastEvent.data;
@@ -124,10 +135,40 @@ export default function HomeScreen() {
       );
     }
 
-    // NOTE: new_comment is intentionally NOT handled here.
-    // PostCard manages its own commentsCount via socket listener + onCountChange from CommentModal.
-    // Updating posts[] here would reset PostCard’s local state and cause double-counting.
+    // 4. handle DELETE_POST
+    if (lastEvent.type === 'delete_post') {
+      const { post_id } = lastEvent.data ?? {};
+      if (post_id) {
+        setPosts((prev) => prev.filter((p) => p._id !== post_id));
+      }
+    }
+
+    // 5. handle STORY_VIEW_UPDATE
+    if (lastEvent.type === 'story_view_update') {
+      const { story_id, views_count } = lastEvent.data ?? {};
+      if (story_id) {
+        // Update global stories group state
+        setStories((prev: any) => 
+          prev.map((group: any) => ({
+            ...group,
+            items: (group.items || []).map((item: any) => 
+              item._id === story_id ? { ...item, views_count: views_count ?? item.views_count } : item
+            )
+          }))
+        );
+
+        // Update active story group if currently viewed in StoryViewer
+        setSelectedStoryGroup((prev) => {
+          if (!prev.some(s => s._id === story_id)) return prev;
+          return prev.map(s => s._id === story_id ? { ...s, views_count: views_count ?? s.views_count } : s);
+        });
+      }
+    }
   }, [lastEvent]);
+
+  const handleDeleteSuccess = (postId: string) => {
+    setPosts((prev) => prev.filter((p) => p._id !== postId && (p as any).id !== postId));
+  };
 
   const groupedStories = useMemo(() => {
     // Current stories state now contains StoryGroup[] from the API
@@ -278,7 +319,12 @@ export default function HomeScreen() {
       ) : (
         <FlashList<PostData>
           data={posts}
-          renderItem={({ item }) => <PostCard post={item} />}
+          renderItem={({ item }) => (
+            <PostCard 
+              post={item} 
+              onDeleteSuccess={() => handleDeleteSuccess(item._id)} 
+            />
+          )}
           estimatedItemSize={350}
           ListHeaderComponent={<StorySection />}
           ListEmptyComponent={!isLoading ? <EmptyState /> : null}

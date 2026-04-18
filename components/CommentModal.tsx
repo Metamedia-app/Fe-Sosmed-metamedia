@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -50,6 +51,7 @@ interface CommentModalProps {
   postId: string;
   initialCommentsCount: number;
   onCountChange?: (count: number) => void;
+  targetCommentId?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -60,6 +62,7 @@ export const CommentModal = ({
   postId,
   initialCommentsCount,
   onCountChange,
+  targetCommentId,
 }: CommentModalProps) => {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
@@ -73,6 +76,10 @@ export const CommentModal = ({
   const [comments, setComments] = useState<Comment[]>([]);
   const [totalComments, setTotalComments] = useState(initialCommentsCount);
   const [isLoading, setIsLoading] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  
+  const itemLayouts = useRef<Record<string, number>>({});
+  const flashAnim = useRef(new Animated.Value(0)).current;
 
   // replies[commentId] = flat list of Reply
   const [replies, setReplies] = useState<Record<string, Reply[]>>({});
@@ -149,16 +156,61 @@ export const CommentModal = ({
 
         // Sync replies_count dari masing-masing komentar
         const counts: Record<string, number> = {};
+        let totalCount = loaded.length; // Start with top-level count
+        
         loaded.forEach(c => {
           counts[c._id] = c.replies_count;
           recursiveReplyCounts[c._id] = c.replies_count;
+          totalCount += (c.replies_count || 0); // Add recursive replies
         });
+
+        // Backend usually sends total_comments in result.data if available
+        const finalTotal = result.data.total_comments ?? result.data.total ?? totalCount;
+        
+        setTotalComments(finalTotal);
         setRepliesCount(prev => ({ ...prev, ...counts }));
       }
     } catch (err) {
       console.error('loadComments error:', err);
     } finally {
       setIsLoading(false);
+      
+      // Handle scrolling and expansion logic
+      if (targetCommentId) {
+        setTimeout(async () => {
+          // 1. Check if it's a top-level comment
+          let targetY = itemLayouts.current[targetCommentId];
+          
+          if (targetY === undefined) {
+            // 2. If not top-level, it might be a reply. 
+            // We need to find which parent it belongs to.
+            // Ideally backend sends top_level_id, but here we scan if we can find it.
+            // For now, let's assume we need to check if it's a reply in any expanded thread.
+            const parentId = Object.keys(replies).find(key => 
+              replies[key].some(r => r._id === targetCommentId)
+            );
+
+            if (parentId) {
+              setExpanded(prev => ({ ...prev, [parentId]: true }));
+              // Give extra time for replies to expand
+              await new Promise(resolve => setTimeout(resolve, 500));
+              targetY = itemLayouts.current[targetCommentId];
+            }
+          }
+
+          if (targetY !== undefined) {
+            scrollViewRef.current?.scrollTo({ y: targetY - 20, animated: true }); // -20 for padding
+            
+            // Trigger flash effect
+            setHighlightedId(targetCommentId);
+            Animated.sequence([
+              Animated.timing(flashAnim, { toValue: 1, duration: 400, useNativeDriver: false }),
+              Animated.delay(2000),
+              Animated.timing(flashAnim, { toValue: 0, duration: 800, useNativeDriver: false })
+            ]).start(() => setHighlightedId(null));
+          }
+        }, 300);
+      }
     }
   };
 
@@ -260,7 +312,11 @@ export const CommentModal = ({
     if (!isVisible || !lastEvent || lastEvent.type !== 'new_comment') return;
 
     const rawCmt = lastEvent.data?.comment ?? lastEvent.data;
-    if (!rawCmt?._id) return;
+    const eventPostId = lastEvent.data?.post_id ?? lastEvent.data?.postId;
+    
+    // GUARD: Ensure the comment belongs to THIS post
+    if (!rawCmt?._id || eventPostId !== postId) return;
+    
     if (processedIds.current.has(rawCmt._id)) return;
     processedIds.current.add(rawCmt._id);
 
@@ -408,9 +464,24 @@ export const CommentModal = ({
 
   const ReplyItem = ({ item, topLevelId }: { item: Reply; topLevelId: string }) => {
     const avatar = getAvatarUrl(item.author, true);
+    const isHighlighted = highlightedId === item._id;
+    const highlightBg = flashAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [theme.background, theme.tint + '15']
+    });
 
     return (
-      <View style={styles.replyItem}>
+      <Animated.View 
+        style={[
+          styles.replyItem,
+          isHighlighted && { backgroundColor: highlightBg, borderRadius: 8, paddingLeft: 8 }
+        ]}
+        onLayout={(e) => {
+          // Absolute Y is Parent Y + Item Y
+          const parentY = itemLayouts.current[topLevelId] || 0;
+          itemLayouts.current[item._id] = parentY + e.nativeEvent.layout.y;
+        }}
+      >
         <View style={styles.threadLine} />
         <Image source={{ uri: avatar }} style={styles.replyAvatar} />
         <View style={styles.commentContent}>
@@ -443,9 +514,10 @@ export const CommentModal = ({
             <Text style={[styles.actionBtnText, { color: theme.primary }]}>Balas</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </Animated.View>
     );
   };
+
 
   const CommentItem = ({ item }: { item: Comment }) => {
     const avatar = getAvatarUrl(item.author, true);
@@ -453,10 +525,23 @@ export const CommentModal = ({
     const isExpanded = expanded[item._id] || false;
     const isLoadingReplies = loadingReply[item._id] || false;
     const replyList = replies[item._id] || [];
+    const isHighlighted = highlightedId === item._id;
     const count = repliesCount[item._id] ?? item.replies_count;
+    const highlightBg = flashAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [theme.background, theme.tint + '20'] // 20% opacity of tint
+    });
 
     return (
-      <View style={styles.commentBlock}>
+      <Animated.View 
+        style={[
+          styles.commentBlock,
+          isHighlighted && { backgroundColor: highlightBg, borderRadius: 12, padding: 8 }
+        ]}
+        onLayout={(e) => {
+          itemLayouts.current[item._id] = e.nativeEvent.layout.y;
+        }}
+      >
         <View style={styles.commentItem}>
           <Image source={{ uri: avatar }} style={styles.commentAvatar} />
           <View style={styles.commentContent}>
@@ -511,7 +596,7 @@ export const CommentModal = ({
           replyList.map(reply => (
             <ReplyItem key={reply._id} item={reply} topLevelId={item._id} />
           ))}
-      </View>
+      </Animated.View>
     );
   };
 

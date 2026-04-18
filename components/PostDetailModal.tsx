@@ -17,9 +17,10 @@ interface PostDetailModalProps {
   isVisible: boolean;
   onClose: () => void;
   post: PostData | null;
+  onDeleteSuccess?: () => void;
 }
 
-export const PostDetailModal = ({ isVisible, onClose, post }: PostDetailModalProps) => {
+export const PostDetailModal = ({ isVisible, onClose, post, onDeleteSuccess }: PostDetailModalProps) => {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
 
@@ -51,7 +52,13 @@ export const PostDetailModal = ({ isVisible, onClose, post }: PostDetailModalPro
             showsVerticalScrollIndicator={false}
           >
             <View style={[styles.cardWrapper, { backgroundColor: theme.background }]}>
-              <PostCard post={post} />
+              <PostCard 
+                post={post} 
+                onDeleteSuccess={() => {
+                  onDeleteSuccess?.();
+                  onClose();
+                }} 
+              />
             </View>
           </ScrollView>
         </SafeAreaView>
