@@ -2,6 +2,7 @@ import { CommentModal } from '@/components/CommentModal';
 import { ShareModal } from '@/components/ShareModal';
 import CreatePostModal from '@/components/CreatePostModal';
 import PostActionModal from '@/components/PostActionModal';
+import ReportPostModal from '@/components/ReportPostModal';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
@@ -220,6 +221,7 @@ export const PostCard = ({
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [isActionModalVisible, setIsActionModalVisible] = useState(false);
+  const [isReportModalVisible, setIsReportModalVisible] = useState(false);
   const [isProcessingRepost, setIsProcessingRepost] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   
@@ -775,8 +777,15 @@ export const PostCard = ({
           console.log(`[ACTION] Delete clicked for: ${post._id}`);
           confirmDelete();
         }}
-        onReport={() => Alert.alert('Info', 'Terima kasih, laporan Anda telah diterima.')}
+        onReport={() => setIsReportModalVisible(true)}
         onCopyLink={() => Alert.alert('Berhasil', 'Tautan berhasil disalin!')}
+      />
+
+      <ReportPostModal
+        isVisible={isReportModalVisible}
+        onClose={() => setIsReportModalVisible(false)}
+        postId={post._id}
+        token={token || ''}
       />
     </View>
   );

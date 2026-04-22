@@ -9,7 +9,7 @@ import { getAvatarUrl } from '@/utils/avatar';
 import { getFollowers, getFollowing } from '@/utils/follow';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { Cake, Calendar, GraduationCap, Layout as ListIcon, Heart, MapPin, Repeat, User as UserIcon, Mail } from 'lucide-react-native';
+import { Cake, Calendar, GraduationCap, Layout as ListIcon, Heart, MapPin, Repeat, User as UserIcon, Mail, BadgeCheck } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
@@ -394,7 +394,16 @@ export default function ProfileScreen() {
           )}
         </TouchableOpacity>
         <View style={styles.tiktokNameContainer}>
-          <Text style={[styles.tiktokNameText, { color: theme.text }]} numberOfLines={1}>{studentData.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={[styles.tiktokNameText, { color: theme.text }]} numberOfLines={1}>
+              {studentData.name}
+            </Text>
+            {user?.email && (
+              <View style={{ marginLeft: 6 }}>
+                <BadgeCheck size={20} color="#3897f0" fill="#3897f0" />
+              </View>
+            )}
+          </View>
           <Text style={[styles.tiktokUsernameText, { color: theme.description }]}>@{studentData.nim}</Text>
         </View>
         <TouchableOpacity 

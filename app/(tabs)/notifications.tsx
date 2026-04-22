@@ -38,7 +38,7 @@ export default function NotificationsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const { token, user } = useAuth();
-  const { lastNotification, setUnreadCount } = useSocket();
+  const { lastNotification, setUnreadCount, soundTheme, setSoundTheme, playNotificationSound } = useSocket();
   const router = useRouter();
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -98,23 +98,36 @@ export default function NotificationsScreen() {
     fetchNotifications();
   }, [fetchNotifications]);
 
-  // Handle real-time notifications via Dedicated socket state
-  useEffect(() => {
-    if (!lastNotification || !lastNotification._id) return;
+    // Handle real-time notifications via Dedicated socket state
+    useEffect(() => {
+      if (!lastNotification || !lastNotification._id) return;
 
-    // Check if we already have this notification (by ID)
-    setNotifications(prev => {
-      if (prev.find(n => n._id === lastNotification._id)) return prev;
-      return [lastNotification, ...prev];
-    });
-  }, [lastNotification]);
+      setNotifications(prev => {
+        // Find if we already have this notification (by ID)
+        const existingIndex = prev.findIndex(n => n._id === lastNotification._id);
+        
+        if (existingIndex !== -1) {
+          // REPLACE: Update the existing notification with fresh data (supports grouping updates)
+          const updated = [...prev];
+          updated[existingIndex] = lastNotification;
+          
+          // OPTIONAL: Move to top if it's a recent interaction
+          const [movedItem] = updated.splice(existingIndex, 1);
+          return [movedItem, ...updated];
+        } else {
+          // APPEND: Prepend the new notification
+          return [lastNotification, ...prev];
+        }
+      });
+    }, [lastNotification]);
 
   const handleMarkAllAsRead = async () => {
     if (!token) return;
     const result = await notificationService.markAllAsRead(token);
     if (result.success) {
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
-      setUnreadCount(0);
+      // Use truth from backend data if available, fallback to 0
+      setUnreadCount(result.data?.unread_count ?? 0);
     }
   };
 
@@ -123,9 +136,15 @@ export default function NotificationsScreen() {
     
     // Mark as read locally and on server
     if (!notification.is_read) {
+      // Optimistic update locally
       setNotifications(prev => prev.map(n => n._id === notification._id ? { ...n, is_read: true } : n));
       setUnreadCount((prev: number) => Math.max(0, prev - 1));
-      await notificationService.markAsRead(token, notification._id);
+      
+      const result = await notificationService.markAsRead(token, notification._id);
+      // Sync with server truth if back-end provides it
+      if (result.success && result.data?.unread_count !== undefined) {
+        setUnreadCount(result.data.unread_count);
+      }
     }
 
     // Navigation logic
@@ -268,6 +287,44 @@ export default function NotificationsScreen() {
         </ScrollView>
       </View>
 
+      {/* SOUND TESTER SECTION */}
+      <View style={[styles.soundTester, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
+        <View style={styles.soundTesterHeader}>
+          <Text style={[styles.soundTesterTitle, { color: theme.text }]}>🔔 Pilih Tema Suara Notifikasi</Text>
+          <TouchableOpacity 
+            onPress={() => playNotificationSound()}
+            style={[styles.playBtn, { backgroundColor: theme.primary }]}
+          >
+            <Bell size={16} color="#FFF" />
+            <Text style={styles.playBtnText}>Cek Suara</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.themeOptions}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {(['ethereal', 'futuristic', 'organic', 'retro', 'minimal'] as const).map((themeName) => (
+              <TouchableOpacity
+                key={themeName}
+                onPress={() => setSoundTheme(themeName)}
+                style={[
+                  styles.themeChip,
+                  { backgroundColor: soundTheme === themeName ? theme.primary : theme.border + '40' }
+                ]}
+              >
+                <Text style={[
+                  styles.themeLabel,
+                  { color: soundTheme === themeName ? '#FFF' : theme.text }
+                ]}>
+                  {themeName === 'ethereal' ? 'Ethereal ✨' : 
+                   themeName === 'futuristic' ? 'Futurist 🛸' : 
+                   themeName === 'organic' ? 'Organic 🪵' :
+                   themeName === 'retro' ? 'Retro 📻' : 'Minimal 🍃'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+
       {isLoading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color={theme.tint} />
@@ -305,6 +362,50 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  soundTester: {
+    padding: 15,
+    borderBottomWidth: 1,
+    gap: 12,
+    marginBottom: 5,
+  },
+  soundTesterHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  soundTesterTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  playBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+  },
+  playBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  themeOptions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  themeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  themeLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
   header: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 

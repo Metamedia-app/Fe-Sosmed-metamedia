@@ -1,7 +1,18 @@
-import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, ReactNode, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { AppState, AppStateStatus } from 'react-native';
+import { Audio } from 'expo-av';
 import { useAuth } from './AuthContext';
 import { notificationService } from '@/utils/notification';
+
+// Sound Registries - Using Local Synthesized Assets (Unique & High Quality)
+const SOUND_THEMES = {
+  ethereal: require('../assets/sounds/ethereal.wav'),
+  futuristic: require('../assets/sounds/futuristic.wav'),
+  organic: require('../assets/sounds/organic.wav'),
+  retro: require('../assets/sounds/retro.wav'),
+  minimal: require('../assets/sounds/minimal.wav'),
+};
 
 type SocketEvent = {
   type: string;
@@ -12,15 +23,19 @@ type SocketEvent = {
 type SocketContextType = {
   lastEvent: SocketEvent | null;
   unreadNotificationsCount: number;
-  lastNotification: any | null; // Specifically for real-time notification persistence
-  setUnreadCount: (count: number) => void;
+  lastNotification: any | null; 
+  setUnreadCount: (update: number | ((prev: number) => number)) => void;
   isConnected: boolean;
   socket: Socket | null;
+  // Sound related
+  soundTheme: keyof typeof SOUND_THEMES;
+  setSoundTheme: (theme: keyof typeof SOUND_THEMES) => void;
+  playNotificationSound: () => Promise<void>;
 };
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
-// URL backend sesuai instruksi baru
+// URL backend
 const SOCKET_URL = 'https://besosmed-production.up.railway.app';
 
 export function SocketProvider({ children }: { children: ReactNode }) {
@@ -29,7 +44,42 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [lastNotification, setLastNotification] = useState<any | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [soundTheme, setSoundTheme] = useState<keyof typeof SOUND_THEMES>('ethereal');
   const socketRef = useRef<Socket | null>(null);
+  const appState = useRef(AppState.currentState);
+  const soundRef = useRef<Audio.Sound | null>(null);
+
+  // Function to play sound based on current theme using local assets
+  const playNotificationSound = useCallback(async () => {
+    try {
+      // Unload previous sound if any
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync();
+      }
+
+      // use createAsync with local asset (require)
+      const { sound } = await Audio.Sound.createAsync(
+        SOUND_THEMES[soundTheme],
+        { shouldPlay: true, volume: 0.8 }
+      );
+      soundRef.current = sound;
+    } catch (error) {
+      console.error('[Sound] Playback error:', error);
+    }
+  }, [soundTheme]);
+
+  const fetchInitialCount = useCallback(async () => {
+    if (!token || !isLoggedIn) return;
+    try {
+      const result = await notificationService.getUnreadCount(token);
+      if (result.success) {
+        const count = result.data?.unread_count ?? (result as any).unread_count ?? 0;
+        setUnreadNotificationsCount(count);
+      }
+    } catch (error) {
+      console.error('[Socket] Sync error:', error);
+    }
+  }, [token, isLoggedIn]);
 
   const setUnreadCount = (update: number | ((prev: number) => number)) => {
     if (typeof update === 'function') {
@@ -40,9 +90,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    // Configure audio mode for consistent playback
+    Audio.setAudioModeAsync({
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+      shouldDuckAndroid: true,
+    });
+
     if (!isLoggedIn || !token) {
       if (socketRef.current) {
-        console.log('[Socket.io] Disconnecting...');
         socketRef.current.disconnect();
         socketRef.current = null;
         setIsConnected(false);
@@ -50,59 +106,46 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Initialize Socket.io with auth token
     const socket = io(SOCKET_URL, {
       auth: { token },
-      transports: ['websocket'], // Force websocket for reliability in RN
+      transports: ['websocket'],
       reconnectionAttempts: 10,
       reconnectionDelay: 5000,
     });
     
-    // Initial Fetch for unread count
-    const fetchInitialCount = async () => {
-      console.log('[Socket] Fetching initial unread count...');
-      try {
-        const result = await notificationService.getUnreadCount(token);
-        console.log('[Socket] Full API Response for unread count:', JSON.stringify(result));
-        if (result.success) {
-          // Robust check for field name variations
-          const count = result.data?.unread_count ?? (result as any).unread_count ?? 0;
-          console.log('[Socket] Computed count:', count);
-          setUnreadNotificationsCount(count);
-        }
-      } catch (error) {
-        console.error('[Socket] Initial fetch error:', error);
-      }
-    };
     fetchInitialCount();
+
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+        fetchInitialCount();
+      }
+      appState.current = nextAppState;
+    };
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
 
     socket.on('connect', () => {
       setIsConnected(true);
-      console.log('[Socket.io] Connected ✅', socket.id);
+      fetchInitialCount();
     });
 
-    socket.on('disconnect', (reason) => {
-      setIsConnected(false);
-      console.log('[Socket.io] Disconnected ❌ Reason:', reason);
-    });
+    socket.on('disconnect', () => setIsConnected(false));
+    socket.on('connect_error', () => setIsConnected(false));
 
-    socket.on('connect_error', (error) => {
-      console.error('[Socket.io] Connection Error:', error.message);
-      setIsConnected(false);
-    });
-
-    // --- Dynamic Event Listeners ---
-    // Mapping events from Backend to our app's lastEvent state
     const events = ['new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 'notification', 'delete_post', 'follow_update', 'story_view_update'];
 
     events.forEach(eventType => {
       socket.on(eventType, (data) => {
-        console.log(`[Socket.io] Event received: ${eventType}`);
-        
-        // Specific handling for notifications
         if (eventType === 'notification') {
-          setUnreadNotificationsCount(prev => prev + 1);
+          const serverCount = data?.unread_count ?? data?.count;
+          if (typeof serverCount === 'number') {
+            setUnreadNotificationsCount(serverCount);
+          } else {
+            setUnreadNotificationsCount(prev => prev + 1);
+          }
           setLastNotification(data);
+          
+          // PLAY NOTIF SOUND!
+          playNotificationSound();
         }
 
         setLastEvent({
@@ -116,12 +159,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socketRef.current = socket;
 
     return () => {
+      subscription.remove();
       if (socketRef.current) {
         socketRef.current.disconnect();
-        socketRef.current = null;
+      }
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
       }
     };
-  }, [isLoggedIn, token]);
+  }, [isLoggedIn, token, fetchInitialCount, playNotificationSound]);
 
   return (
     <SocketContext.Provider value={{ 
@@ -130,7 +176,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       lastNotification, 
       setUnreadCount,
       isConnected, 
-      socket: socketRef.current 
+      socket: socketRef.current,
+      soundTheme,
+      setSoundTheme,
+      playNotificationSound
     }}>
       {children}
     </SocketContext.Provider>

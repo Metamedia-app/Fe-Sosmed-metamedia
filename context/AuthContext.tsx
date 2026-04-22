@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { loadGoogleScript, loginRequestWeb } from '@/utils/googleAuth';
 
 type User = {
@@ -48,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
+  const [isProcessingGoogle, setIsProcessingGoogle] = useState(false);
   const WEB_CLIENT_ID = '415448446076-rppbntavevtlk6llvc9j7douo2e4gvq5.apps.googleusercontent.com';
 
   // Configure Google Sign-In
@@ -58,13 +59,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       console.log('[GoogleSignin] Native Platform: Configuring...');
       try {
-        GoogleSignin.configure({
-          webClientId: WEB_CLIENT_ID,
-          offlineAccess: true,
-        });
-        console.log('[GoogleSignin] Configured successfully ✅');
+        // Strict guard: NEVER require GoogleSignin in Expo Go
+        const isExpoGo = Constants.appOwnership === 'expo';
+        if (!isExpoGo) {
+          const { GoogleSignin } = require('@react-native-google-signin/google-signin');
+          if (GoogleSignin) {
+            GoogleSignin.configure({
+              webClientId: WEB_CLIENT_ID,
+              offlineAccess: true,
+            });
+            console.log('[GoogleSignin] Configured successfully ✅');
+          }
+        } else {
+          console.log('[GoogleSignin] Skipped configuration (Expo Go environment)');
+        }
       } catch (error) {
-        console.error('[GoogleSignin] Configuration error ❌', error);
+        console.warn('[GoogleSignin] Warning: Native module not found.');
       }
     }
   }, []);
@@ -230,15 +240,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const linkGoogle = async () => {
     if (!token) return { success: false, message: 'Harus login dulu untuk menautkan akun' };
+    if (isProcessingGoogle) return { success: false, message: 'Proses Google sedang berjalan...' };
+    
+    setIsProcessingGoogle(true);
+    console.log('[AuthContext] linkGoogle called. Stack:', new Error().stack?.split('\n')[2]);
+    
     try {
       let idToken: string | undefined;
 
       if (Platform.OS === 'web') {
         idToken = await loginRequestWeb(WEB_CLIENT_ID);
       } else {
-        await GoogleSignin.hasPlayServices();
-        const userInfo = await GoogleSignin.signIn();
-        idToken = userInfo.data?.idToken ?? undefined;
+        // Dynamic import before calling native methods
+        try {
+          const isExpoGo = Constants.appOwnership === 'expo';
+          if (isExpoGo) {
+            return { success: false, message: 'Google Sign-In tidak didukung di Expo Go. Gunakan Development Build.' };
+          }
+          
+          const { GoogleSignin } = require('@react-native-google-signin/google-signin');
+          await GoogleSignin.hasPlayServices();
+          
+          // Force account picker by signing out first
+          try { await GoogleSignin.signOut(); } catch (e) {}
+          
+          const userInfo = await GoogleSignin.signIn();
+          idToken = userInfo.data?.idToken ?? undefined;
+        } catch (e: any) {
+          if (e.message?.includes('RNGoogleSignin') || e.message?.includes('found')) {
+            return { success: false, message: 'Fitur ini membutuhkan Development Build (tidak support di Expo Go)' };
+          }
+          throw e;
+        }
       }
 
       if (!idToken) return { success: false, message: 'Gagal mengambil idToken dari Google' };
@@ -259,6 +292,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await response.json();
       console.log('[LinkGoogle] DEBUG Result:', JSON.stringify(result));
       if (response.ok) {
+        // Update local user state with email immediately
+        if (result.data?.email) {
+          updateUserData({ email: result.data.email });
+        }
         await refreshProfile();
         return { success: true, message: 'Akun Google berhasil ditautkan' };
       } else {
@@ -267,22 +304,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       console.error('Link Google error:', error);
       return { success: false, message: error.message || 'Gagal terhubung ke Google' };
+    } finally {
+      setIsProcessingGoogle(false);
     }
   };
 
   const loginWithGoogle = async () => {
+    if (isProcessingGoogle) return { success: false, message: 'Proses Google sedang berjalan...' };
+    
+    setIsProcessingGoogle(true);
+    console.log('[AuthContext] loginWithGoogle called. Stack:', new Error().stack?.split('\n')[2]);
+    
     try {
       let idToken: string | undefined;
 
       if (Platform.OS === 'web') {
         idToken = await loginRequestWeb(WEB_CLIENT_ID);
       } else {
-        await GoogleSignin.hasPlayServices();
-        // Force account picker by signing out first
-        try { await GoogleSignin.signOut(); } catch (e) {}
-        
-        const userInfo = await GoogleSignin.signIn();
-        idToken = userInfo.data?.idToken ?? undefined;
+        try {
+          const isExpoGo = Constants.appOwnership === 'expo';
+          if (isExpoGo) {
+            return { success: false, message: 'Google Sign-In tidak didukung di Expo Go. Gunakan Development Build.' };
+          }
+
+          const { GoogleSignin } = require('@react-native-google-signin/google-signin');
+          await GoogleSignin.hasPlayServices();
+          // Force account picker by signing out first
+          try { await GoogleSignin.signOut(); } catch (e) {}
+          
+          const userInfo = await GoogleSignin.signIn();
+          idToken = userInfo.data?.idToken ?? undefined;
+        } catch (e: any) {
+          if (e.message?.includes('RNGoogleSignin') || e.message?.includes('found')) {
+            return { success: false, message: 'Fitur ini membutuhkan Development Build (tidak support di Expo Go)' };
+          }
+          throw e;
+        }
       }
 
       if (!idToken) return { success: false, message: 'Gagal mengambil idToken dari Google' };
@@ -307,6 +364,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       console.error('Login Google error:', error);
       return { success: false, message: error.message || 'Gagal login via Google' };
+    } finally {
+      setIsProcessingGoogle(false);
     }
   };
 

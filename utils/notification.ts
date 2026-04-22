@@ -47,7 +47,7 @@ export const notificationService = {
     }
   },
 
-  markAllAsRead: async (token: string): Promise<{ success: boolean; message: string }> => {
+  markAllAsRead: async (token: string): Promise<{ success: boolean; message: string; data?: { unread_count: number } }> => {
     try {
       const response = await fetch(`${BASE_URL}/read`, {
         method: 'PATCH',
@@ -63,7 +63,7 @@ export const notificationService = {
     }
   },
 
-  markAsRead: async (token: string, id: string): Promise<{ success: boolean; message: string }> => {
+  markAsRead: async (token: string, id: string): Promise<{ success: boolean; message: string; data?: { unread_count: number } }> => {
     try {
       const response = await fetch(`${BASE_URL}/${id}/read`, {
         method: 'PATCH',

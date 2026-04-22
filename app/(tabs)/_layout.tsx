@@ -10,12 +10,52 @@ import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import CreatePostModal from '@/components/CreatePostModal';
 import { useState } from 'react';
 
+function NotificationBell() {
+  const { unreadNotificationsCount } = useSocket();
+  const colorScheme = useColorScheme() ?? 'light';
+  const theme = Colors[colorScheme];
+  const router = useRouter();
+
+  return (
+    <TouchableOpacity 
+      onPress={() => router.push('/notifications')}
+      style={{ marginRight: 15, position: 'relative' }}
+    >
+      <Bell size={28} color="#FFFFFF" />
+      {unreadNotificationsCount > 0 && (
+        <View style={{
+          position: 'absolute',
+          top: -4,
+          right: -4,
+          backgroundColor: '#FF3B30', // iOS Red
+          minWidth: 18,
+          height: 18,
+          borderRadius: 9,
+          justifyContent: 'center',
+          alignItems: 'center',
+          paddingHorizontal: 4,
+          borderWidth: 1.5,
+          borderColor: theme.primary,
+        }}>
+          <Text style={{ 
+            color: '#FFFFFF', 
+            fontSize: 10, 
+            fontWeight: 'bold',
+            textAlign: 'center' 
+          }}>
+            {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+          </Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 export default function TabLayout() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
   const { isLoggedIn } = useAuth();
-  const { unreadNotificationsCount } = useSocket();
   const [isCreatePostVisible, setIsCreatePostVisible] = useState(false);
 
   if (!isLoggedIn) {
@@ -61,39 +101,7 @@ export default function TabLayout() {
               />
             </View>
           ),
-          headerRight: () => (
-            <TouchableOpacity 
-              onPress={() => router.push('/notifications')}
-              style={{ marginRight: 15, position: 'relative' }}
-            >
-              <Bell size={28} color="#FFFFFF" />
-              {unreadNotificationsCount > 0 && (
-                <View style={{
-                  position: 'absolute',
-                  top: -4,
-                  right: -4,
-                  backgroundColor: '#FF3B30', // iOS Red
-                  minWidth: 18,
-                  height: 18,
-                  borderRadius: 9,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  paddingHorizontal: 4,
-                  borderWidth: 1.5,
-                  borderColor: theme.primary,
-                }}>
-                  <Text style={{ 
-                    color: '#FFFFFF', 
-                    fontSize: 10, 
-                    fontWeight: 'bold',
-                    textAlign: 'center' 
-                  }}>
-                    {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          ),
+          headerRight: () => <NotificationBell />,
           tabBarStyle: {
             position: 'absolute',
             backgroundColor: theme.card, // WARNA BACKGROUND: Kembalikan block warna asli (biasanya putih)
