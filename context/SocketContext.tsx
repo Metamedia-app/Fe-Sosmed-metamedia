@@ -131,10 +131,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket.on('disconnect', () => setIsConnected(false));
     socket.on('connect_error', () => setIsConnected(false));
 
-    const events = ['new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 'notification', 'delete_post', 'follow_update', 'story_view_update'];
+    const events = ['new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 'notification', 'delete_post', 'follow_update', 'story_view_update', 'chat_message', 'typing'];
 
     events.forEach(eventType => {
       socket.on(eventType, (data) => {
+        if (eventType === 'typing' || eventType === 'chat_message') {
+          console.log(`[SocketEvent] ${eventType}:`, data);
+        }
+
         if (eventType === 'notification') {
           const serverCount = data?.unread_count ?? data?.count;
           if (typeof serverCount === 'number') {
