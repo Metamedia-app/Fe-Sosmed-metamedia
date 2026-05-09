@@ -1,6 +1,6 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { MessageSquareText, Radio, Search, Users } from 'lucide-react-native';
+import { MessageSquareText, Radio, Search, Users, Check, CheckCheck, Clock } from 'lucide-react-native';
 import React, { useState, useCallback, useEffect } from 'react';
 import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
@@ -91,12 +91,12 @@ export default function ChatScreen() {
   const [groups, setGroups] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { token, user } = useAuth();
-  const { lastEvent } = useSocket();
+  const { lastEvent, unreadChatSummary, refreshUnreadChat, socket } = useSocket();
   const router = useRouter();
 
-  const fetchChats = useCallback(async () => {
+  const fetchChats = useCallback(async (silent = false) => {
     if (!token) return;
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     const result = await getConversations(token);
     if (result.success) {
       const sortedData = result.data.sort((a: any, b: any) => {
@@ -110,24 +110,25 @@ export default function ChatScreen() {
       
       for (const item of sortedData) {
         const userId = item.user?._id || item.user?.id;
-        // Keep the item if we haven't seen this user yet, or if it doesn't have a user object (failsafe)
-        if (!userId) {
-          uniqueData.push(item);
-        } else if (!seenUsers.has(userId)) {
+        
+        // ONLY include if it's a personal chat (has a user)
+        if (userId && !seenUsers.has(userId)) {
           seenUsers.add(userId);
           uniqueData.push(item);
         }
       }
       
-      console.log(`[ChatScreen] Rendered Inbox: ${uniqueData.length} unique conversations from ${sortedData.length} total.`);
+      if (uniqueData.length > 0) {
+        console.log('[Debug Inbox Terbaru] Data Pertama:', JSON.stringify(uniqueData[0], null, 2));
+      }
       setConversations(uniqueData);
     }
-    setIsLoading(false);
+    if (!silent) setIsLoading(false);
   }, [token]);
 
-  const fetchGroups = useCallback(async () => {
+  const fetchGroups = useCallback(async (silent = false) => {
     if (!token) return;
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     const result = await getMyGroups(token);
     if (result.success) {
       const sortedData = result.data.sort((a: any, b: any) => {
@@ -135,48 +136,109 @@ export default function ChatScreen() {
         const timeB = new Date(b.last_message_at || 0).getTime();
         return timeB - timeA;
       });
+      if (sortedData.length > 0) {
+        console.log('[Debug Grup Terbaru] Data Pertama:', JSON.stringify(sortedData[0], null, 2));
+      }
       setGroups(sortedData);
     }
-    setIsLoading(false);
+    if (!silent) setIsLoading(false);
   }, [token]);
 
   // Handle incoming real-time messages to bump conversation to top
   useEffect(() => {
-    if (lastEvent?.type === 'chat_message') {
-      const newMsg = lastEvent.data;
+    if (!socket) return;
+
+    const handleUnifiedMessage = (newMsg: any) => {
+      console.log('[ChatList] New message received:', newMsg);
+      let foundInInbox = false;
+      let foundInGroups = false;
+      
+      // Update personal inbox
       setConversations(prev => {
         const existingIdx = prev.findIndex(c => c._id === newMsg.conversation_id);
         if (existingIdx >= 0) {
-          // Clone the array
+          foundInInbox = true;
           const updated = [...prev];
           const convo = { ...updated[existingIdx] };
-          // Update last message data
           convo.last_message = newMsg.body || 'Mengirim lampiran';
           convo.last_message_at = newMsg.createdAt;
-          // Only increment unread if I am the recipient
-          if (newMsg.sender_id !== user?._id) {
+          convo.last_message_status = newMsg.status || 'sent';
+          convo.last_message_sender_id = newMsg.sender_id?._id || newMsg.sender_id;
+          
+          if (newMsg.sender_id !== user?._id && newMsg.sender_id?._id !== user?._id) {
             convo.unread_count = (convo.unread_count || 0) + 1;
           }
-          // Remove from old position and add to top
           updated.splice(existingIdx, 1);
           return [convo, ...updated];
-        } else {
-          // If it's a completely new conversation, we trigger a refetch
-          fetchChats();
-          return prev;
         }
+        return prev;
       });
-    }
-  }, [lastEvent, fetchChats, user?._id]);
+
+      // Update group inbox
+      setGroups(prev => {
+        const existingIdx = prev.findIndex(g => g._id === newMsg.conversation_id);
+        if (existingIdx >= 0) {
+          foundInGroups = true;
+          const updated = [...prev];
+          const group = { ...updated[existingIdx] };
+          group.last_message = newMsg.body || 'Mengirim lampiran';
+          group.last_message_at = newMsg.createdAt;
+          group.last_message_status = newMsg.status || 'sent';
+          group.last_message_sender_id = newMsg.sender_id?._id || newMsg.sender_id;
+
+          if (newMsg.sender_id !== user?._id && newMsg.sender_id?._id !== user?._id) {
+            group.unread_count = (group.unread_count || 0) + 1;
+          }
+          updated.splice(existingIdx, 1);
+          return [group, ...updated];
+        }
+        return prev;
+      });
+
+      // If not found in either, it's a new conversation
+      setTimeout(() => {
+        if (!foundInInbox && !foundInGroups) {
+          console.log('[ChatList] Message not found in current lists, fetching all...');
+          fetchChats(true);
+          fetchGroups(true);
+        }
+      }, 500);
+    };
+
+    const handleStatusUpdate = (data: any) => {
+      console.log('[ChatList] Status update received:', data);
+      setConversations(prev => prev.map(convo => {
+        if (convo._id === data.conversation_id) {
+          return { ...convo, last_message_status: data.status };
+        }
+        return convo;
+      }));
+      setGroups(prev => prev.map(group => {
+        if (group._id === data.conversation_id) {
+          return { ...group, last_message_status: data.status };
+        }
+        return group;
+      }));
+    };
+
+    socket.on('new_message', handleUnifiedMessage);
+    socket.on('message_status_update', handleStatusUpdate);
+
+    return () => {
+      socket.off('new_message', handleUnifiedMessage);
+      socket.off('message_status_update', handleStatusUpdate);
+    };
+  }, [socket, fetchChats, fetchGroups, user?._id]);
 
   useFocusEffect(
     useCallback(() => {
+      refreshUnreadChat(); // Sync latest unread summary from API
       if (activeCategory === 'inbox') {
         fetchChats();
       } else if (activeCategory === 'grup') {
         fetchGroups();
       }
-    }, [activeCategory, fetchChats, fetchGroups])
+    }, [activeCategory, fetchChats, fetchGroups, refreshUnreadChat])
   );
 
   const getActiveData = () => {
@@ -188,7 +250,7 @@ export default function ChatScreen() {
     }
   };
 
-  const renderCategoryTab = (id: string, label: string, icon: any) => {
+  const renderCategoryTab = (id: string, label: string, icon: any, unreadCount: number = 0) => {
     const isActive = activeCategory === id;
     const IconComponent = icon;
     
@@ -209,6 +271,19 @@ export default function ChatScreen() {
         ]}>
           {label}
         </Text>
+        {unreadCount > 0 && (
+          <View style={[
+            styles.tabBadge, 
+            { backgroundColor: isActive ? '#FFFFFF' : theme.tint }
+          ]}>
+            <Text style={[
+              styles.tabBadgeText,
+              { color: isActive ? theme.tint : '#FFFFFF' }
+            ]}>
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </Text>
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -223,9 +298,9 @@ export default function ChatScreen() {
 
       {/* Categories Tabs */}
       <View style={[styles.tabsContainer]}>
-        {renderCategoryTab('inbox', 'Inbox', MessageSquareText)}
-        {renderCategoryTab('grup', 'Grup', Users)}
-        {renderCategoryTab('community', 'Community', Radio)}
+        {renderCategoryTab('inbox', 'Inbox', MessageSquareText, unreadChatSummary?.categories?.inbox)}
+        {renderCategoryTab('grup', 'Grup', Users, unreadChatSummary?.categories?.group)}
+        {renderCategoryTab('community', 'Community', Radio, unreadChatSummary?.categories?.community)}
       </View>
 
       {isLoading && (activeCategory === 'inbox' || activeCategory === 'grup') ? (
@@ -300,12 +375,27 @@ export default function ChatScreen() {
                     <Text style={[styles.time, { color: unread > 0 ? theme.tint : theme.description }, unread > 0 && { fontWeight: 'bold' }]}>{timeStr}</Text>
                   </View>
                   <View style={styles.messageRow}>
-                    <Text 
-                      style={[styles.lastMessage, { color: unread > 0 ? theme.text : theme.description }, unread > 0 && { fontWeight: '600' }]} 
-                      numberOfLines={1}
-                    >
-                      {lastMessage}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      {(isInbox || isGroup) && item.last_message_sender_id === user?._id && (
+                        <View style={{ marginRight: 4 }}>
+                          {(item.last_message_status === 'read' || item.status === 'read') ? (
+                            <CheckCheck size={14} color="#4FC3F7" />
+                          ) : (item.last_message_status === 'delivered' || item.status === 'delivered') ? (
+                            <CheckCheck size={14} color={theme.description} />
+                          ) : item.last_message_status === 'pending' ? (
+                            <Clock size={12} color={theme.description} />
+                          ) : (
+                            <Check size={14} color={theme.description} />
+                          )}
+                        </View>
+                      )}
+                      <Text 
+                        style={[styles.lastMessage, { color: unread > 0 ? theme.text : theme.description }, unread > 0 && { fontWeight: '600' }]} 
+                        numberOfLines={1}
+                      >
+                        {lastMessage}
+                      </Text>
+                    </View>
                     {unread > 0 && (
                       <View style={[styles.unreadBadge, { backgroundColor: theme.tint }]}>
                         <Text style={styles.unreadText}>{unread}</Text>
@@ -407,6 +497,19 @@ const styles = StyleSheet.create({
   unreadText: {
     color: '#FFF',
     fontSize: 11,
+    fontWeight: 'bold',
+  },
+  tabBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    marginLeft: 4,
+  },
+  tabBadgeText: {
+    fontSize: 10,
     fontWeight: 'bold',
   },
 });

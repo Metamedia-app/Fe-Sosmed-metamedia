@@ -4,6 +4,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { Audio } from 'expo-av';
 import { useAuth } from './AuthContext';
 import { notificationService } from '@/utils/notification';
+import { getUnreadSummary } from '@/utils/chat';
 
 // Sound Registries - Using Local Synthesized Assets (Unique & High Quality)
 const SOUND_THEMES = {
@@ -23,8 +24,10 @@ type SocketEvent = {
 type SocketContextType = {
   lastEvent: SocketEvent | null;
   unreadNotificationsCount: number;
+  unreadChatSummary: { total_unread: number; categories: { inbox: number; group: number; community: number } };
   lastNotification: any | null; 
   setUnreadCount: (update: number | ((prev: number) => number)) => void;
+  refreshUnreadChat: () => void;
   isConnected: boolean;
   socket: Socket | null;
   // Sound related
@@ -39,9 +42,10 @@ const SocketContext = createContext<SocketContextType | undefined>(undefined);
 const SOCKET_URL = 'https://besosmed-production.up.railway.app';
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const { token, isLoggedIn } = useAuth();
+  const { token, user, isLoggedIn } = useAuth();
   const [lastEvent, setLastEvent] = useState<SocketEvent | null>(null);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+  const [unreadChatSummary, setUnreadChatSummary] = useState({ total_unread: 0, categories: { inbox: 0, group: 0, community: 0 } });
   const [lastNotification, setLastNotification] = useState<any | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [soundTheme, setSoundTheme] = useState<keyof typeof SOUND_THEMES>('ethereal');
@@ -76,8 +80,25 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         const count = result.data?.unread_count ?? (result as any).unread_count ?? 0;
         setUnreadNotificationsCount(count);
       }
+      
+      const chatResult = await getUnreadSummary(token);
+      if (chatResult.success) {
+        setUnreadChatSummary(chatResult.data);
+      }
     } catch (error) {
       console.error('[Socket] Sync error:', error);
+    }
+  }, [token, isLoggedIn]);
+
+  const refreshUnreadChat = useCallback(async () => {
+    if (!token || !isLoggedIn) return;
+    try {
+      const chatResult = await getUnreadSummary(token);
+      if (chatResult.success) {
+        setUnreadChatSummary(chatResult.data);
+      }
+    } catch (error) {
+      console.error('[Socket] Chat sync error:', error);
     }
   }, [token, isLoggedIn]);
 
@@ -108,6 +129,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     const socket = io(SOCKET_URL, {
       auth: { token },
+      query: { userId: user?._id },
       transports: ['websocket'],
       reconnectionAttempts: 10,
       reconnectionDelay: 5000,
@@ -131,12 +153,29 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket.on('disconnect', () => setIsConnected(false));
     socket.on('connect_error', () => setIsConnected(false));
 
-    const events = ['new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 'notification', 'delete_post', 'follow_update', 'story_view_update', 'chat_message', 'typing'];
+    const events = [
+      'new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 
+      'notification', 'delete_post', 'follow_update', 'story_view_update', 
+      'new_message', 'group_message', 'typing_status', 'group_typing_status', 'unread_update',
+      'message_status_update'
+    ];
 
     events.forEach(eventType => {
       socket.on(eventType, (data) => {
-        if (eventType === 'typing' || eventType === 'chat_message') {
+        if (eventType.includes('typing') || eventType.includes('message') || eventType === 'unread_update') {
           console.log(`[SocketEvent] ${eventType}:`, data);
+        }
+
+        if (eventType === 'unread_update') {
+          // Backend pushes the exact unread format via socket! No need to fetch manually.
+          if (data) {
+            setUnreadChatSummary(data);
+          }
+        }
+
+        if (eventType === 'new_message' || eventType === 'group_message') {
+          // Only fetch manually as fallback if needed, but unread_update should cover it
+          refreshUnreadChat();
         }
 
         if (eventType === 'notification') {
@@ -171,14 +210,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         soundRef.current.unloadAsync();
       }
     };
-  }, [isLoggedIn, token, fetchInitialCount, playNotificationSound]);
+  }, [isLoggedIn, token, fetchInitialCount, playNotificationSound, user?._id]);
 
   return (
     <SocketContext.Provider value={{ 
       lastEvent, 
       unreadNotificationsCount, 
+      unreadChatSummary,
       lastNotification, 
       setUnreadCount,
+      refreshUnreadChat,
       isConnected, 
       socket: socketRef.current,
       soundTheme,

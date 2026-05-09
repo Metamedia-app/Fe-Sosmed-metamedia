@@ -56,6 +56,7 @@ export default function TabLayout() {
   const theme = Colors[colorScheme];
   const router = useRouter();
   const { isLoggedIn } = useAuth();
+  const { unreadChatSummary } = useSocket();
   const [isCreatePostVisible, setIsCreatePostVisible] = useState(false);
 
   if (!isLoggedIn) {
@@ -184,6 +185,15 @@ export default function TabLayout() {
             title: 'Chatting',
             tabBarLabel: 'Chat',
             tabBarIcon: ({ color, size }) => <MessageSquare size={size} color={color} />,
+            tabBarBadge: unreadChatSummary?.total_unread > 0 ? unreadChatSummary.total_unread : undefined,
+            tabBarBadgeStyle: {
+              backgroundColor: '#FF3B30',
+              color: '#FFFFFF',
+              fontSize: 10,
+              minWidth: 16,
+              height: 16,
+              lineHeight: 16,
+            }
           }}
         />
         <Tabs.Screen

@@ -25,6 +25,44 @@ export const getConversations = async (token: string) => {
   }
 };
 
+export const markAsRead = async (conversationId: string, token: string) => {
+  try {
+    const response = await fetch(`${BASE_URL}/chat/conversations/${conversationId}/read`, {
+      method: 'PATCH',
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    const result = await response.json();
+    return { success: response.ok && result.success };
+  } catch (error) {
+    console.error('Error marking as read:', error);
+    return { success: false };
+  }
+};
+
+export const getUnreadSummary = async (token: string) => {
+  try {
+    console.log('[API Chat] Fetching unread summary...');
+    const response = await fetch(`${BASE_URL}/chat/unread-summary`, {
+      method: 'GET',
+      headers: {
+        'Accept': '*/*',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    const result = await response.json();
+    return {
+      success: response.ok && result.success,
+      data: result.data || { total_unread: 0, categories: { inbox: 0, group: 0, community: 0 } }
+    };
+  } catch (error) {
+    console.error('Error fetching unread summary:', error);
+    return { success: false, data: { total_unread: 0, categories: { inbox: 0, group: 0, community: 0 } } };
+  }
+};
+
 export const getMessages = async (conversationId: string, token: string) => {
   try {
     console.log(`[API Chat] Fetching messages for conversation: ${conversationId}`);

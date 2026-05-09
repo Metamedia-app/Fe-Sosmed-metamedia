@@ -8,8 +8,8 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
-import { getMessages, sendMessage, sendTypingStatus, deleteMessage, clearConversation } from '@/utils/chat';
-import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Trash2, Smile, Camera } from 'lucide-react-native';
+import { getMessages, sendMessage, sendTypingStatus, deleteMessage, clearConversation, markAsRead } from '@/utils/chat';
+import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import SecureMedia from '@/components/SecureMedia';
 import { format } from 'date-fns';
@@ -20,7 +20,7 @@ export default function ChatRoomScreen() {
   const theme = Colors[colorScheme];
   const router = useRouter();
   const { token, user } = useAuth();
-  const { lastEvent } = useSocket();
+  const { lastEvent, socket } = useSocket();
   
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
@@ -44,11 +44,12 @@ export default function ChatRoomScreen() {
     try {
       const result = await getMessages(id as string, token);
       if (result.success) {
-        // Sort descending because FlatList is inverted
         const sorted = result.data.sort((a: any, b: any) => 
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
-        setMessages(sorted);
+        // Ensure no duplicates from backend
+        const unique = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        setMessages(unique);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -62,18 +63,28 @@ export default function ChatRoomScreen() {
   }, [fetchChatMessages]);
 
   useEffect(() => {
-    if (!lastEvent || !id || id === 'new') return;
+    if (!socket || !id || id === 'new') return;
 
-    if (lastEvent.type === 'chat_message') {
-      const newMsg = lastEvent.data;
-      if (newMsg.conversation_id === id) {
+    // Mark as read when entering the room
+    markAsRead(id as string, token as string);
+
+    const handleNewMessage = (data: any) => {
+      console.log(`[ChatRoom Debug] Direct Socket new_message:`, data.body);
+      if (data.conversation_id === id) {
+        // Also mark as read when a new message arrives and we are in the room
+        markAsRead(id as string, token as string);
+        
         setMessages(prev => {
-          if (prev.some(m => m._id === newMsg._id)) return prev;
-          return [newMsg, ...prev];
+          const exists = prev.findIndex(m => m._id === data._id) !== -1;
+          if (exists) return prev;
+          console.log('[ChatRoom Debug] Adding message to state via direct listener');
+          return [data, ...prev];
         });
       }
-    } else if (lastEvent.type === 'typing') {
-      const { conversationId, isTyping: userIsTyping, userId } = lastEvent.data;
+    };
+
+    const handleTypingStatus = (data: any) => {
+      const { conversationId, isTyping: userIsTyping, userId } = data;
       if (conversationId === id && userId !== user?._id) {
         setRemoteTyping(userIsTyping);
         if (userIsTyping) {
@@ -83,8 +94,28 @@ export default function ChatRoomScreen() {
           }, 3000);
         }
       }
-    }
-  }, [lastEvent, id, user?._id]);
+    };
+
+    const handleStatusUpdate = (data: any) => {
+      console.log('[ChatRoom] Status update received:', data);
+      if (data.conversation_id === id) {
+        setMessages(prev => prev.map(msg => ({
+          ...msg,
+          status: data.status || msg.status
+        })));
+      }
+    };
+
+    socket.on('new_message', handleNewMessage);
+    socket.on('typing_status', handleTypingStatus);
+    socket.on('message_status_update', handleStatusUpdate);
+
+    return () => {
+      socket.off('new_message', handleNewMessage);
+      socket.off('typing_status', handleTypingStatus);
+      socket.off('message_status_update', handleStatusUpdate);
+    };
+  }, [socket, id, user?._id, token]);
 
   const handleTyping = (text: string) => {
     setInputText(text);
@@ -122,15 +153,29 @@ export default function ChatRoomScreen() {
   };
 
   const handleSendMessage = async () => {
-    if (!inputText.trim() && !selectedImage) return;
+    if ((!inputText.trim() && !selectedImage) || isSending) return;
     if (!token) return;
 
+    const tempId = `temp-${Date.now()}`;
     const currentText = inputText;
     const currentImage = selectedImage;
     
+    // Create optimistic message
+    const pendingMsg = {
+      _id: tempId,
+      body: currentText.trim(),
+      sender_id: user?._id,
+      createdAt: new Date().toISOString(),
+      status: 'pending', // Special status for clock icon
+      attachments: currentImage ? [{ file_url: currentImage.uri, file_type: 'image' }] : []
+    };
+
     setInputText('');
     setSelectedImage(null);
     setIsSending(true);
+
+    // Optimistically add to list
+    setMessages(prev => [pendingMsg, ...prev]);
 
     try {
       const files = currentImage ? [currentImage] : undefined;
@@ -143,21 +188,27 @@ export default function ChatRoomScreen() {
 
       const result = await sendMessage(params);
       
-      if (result.success) {
-        // Optimistically add to list or refetch
-        setMessages(prev => [result.data, ...prev]);
+      if (result.success && result.data) {
+        // Replace temp message with real one from server
+        setMessages(prev => {
+          const filtered = prev.filter(m => m._id !== tempId);
+          if (filtered.findIndex(m => m._id === result.data._id) !== -1) return filtered;
+          return [result.data, ...filtered];
+        });
+        
         if (id === 'new' && result.data.conversation_id) {
-          // If this was a new chat, we might want to update the ID, 
-          // but for now relying on the backend returning the new message is fine
           router.setParams({ id: result.data.conversation_id });
         }
       } else {
         Alert.alert('Gagal', 'Pesan gagal dikirim');
+        // Remove optimistic message if failed
+        setMessages(prev => prev.filter(m => m._id !== tempId));
         setInputText(currentText);
         setSelectedImage(currentImage);
       }
     } catch (error) {
       console.error('Send error:', error);
+      setMessages(prev => prev.filter(m => m._id !== tempId));
       setInputText(currentText);
       setSelectedImage(currentImage);
     } finally {
@@ -200,7 +251,7 @@ export default function ChatRoomScreen() {
   };
 
   const handleDeleteMessage = (message: any) => {
-    const isMe = message.sender_id === user?._id;
+    const isMe = message.sender_id === user?._id || message.sender_id?._id === user?._id;
     
     const options: any[] = [
       { 
@@ -227,7 +278,7 @@ export default function ChatRoomScreen() {
   };
 
   const renderMessage = ({ item }: { item: any }) => {
-    const isMe = item.sender_id === user?._id;
+    const isMe = item.sender_id === user?._id || item.sender_id?._id === user?._id;
     const time = format(new Date(item.createdAt), 'HH:mm');
     
     return (
@@ -273,8 +324,12 @@ export default function ChatRoomScreen() {
                   {time}
                 </Text>
                 {isMe && (
-                  item.is_read ? 
-                    <CheckCheck size={14} color="#FFF" style={styles.readIcon} /> : 
+                  (item.status === 'read' || item.is_read) ? 
+                    <CheckCheck size={14} color="#4FC3F7" style={styles.readIcon} /> : 
+                    item.status === 'delivered' ?
+                    <CheckCheck size={14} color="rgba(255,255,255,0.7)" style={styles.readIcon} /> :
+                    item.status === 'pending' ?
+                    <Clock size={11} color="rgba(255,255,255,0.5)" style={styles.readIcon} /> :
                     <Check size={14} color="rgba(255,255,255,0.7)" style={styles.readIcon} />
                 )}
               </View>
@@ -322,7 +377,7 @@ export default function ChatRoomScreen() {
         <FlatList
           ref={flatListRef}
           data={messages}
-          keyExtractor={(item) => item._id}
+          keyExtractor={(item, index) => item._id || index.toString()}
           renderItem={renderMessage}
           inverted
           contentContainerStyle={styles.messagesList}

@@ -110,15 +110,17 @@ export const sendGroupMessage = async ({ token, conversationId, body, files }: S
   }
 };
 
-export const deleteGroupMessage = async (messageId: string, token: string) => {
+export const deleteGroupMessage = async (messageId: string, type: 'me' | 'everyone', token: string) => {
   try {
-    console.log(`[API ChatMatkul] Deleting message ${messageId}`);
+    console.log(`[API ChatMatkul] Deleting message ${messageId} for ${type}`);
     const response = await fetch(`${BASE_URL}/chat-matkul/messages/${messageId}`, {
       method: 'DELETE',
       headers: {
         'Accept': '*/*',
+        'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
-      }
+      },
+      body: JSON.stringify({ type })
     });
     const result = await response.json();
     console.log(`[API ChatMatkul] Delete message response:`, result);
@@ -144,6 +146,65 @@ export const sendGroupTypingStatus = async (conversationId: string, isTyping: bo
     return { success: response.ok && result.success };
   } catch (error) {
     console.error('Error sending group typing status:', error);
+    return { success: false };
+  }
+};
+export const getGroupDetail = async (conversationId: string, token: string) => {
+  try {
+    console.log(`[API ChatMatkul] Fetching group details for ${conversationId}...`);
+    const response = await fetch(`${BASE_URL}/chat-matkul/groups/${conversationId}`, {
+      method: 'GET',
+      headers: {
+        'Accept': '*/*',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    const result = await response.json();
+    return { 
+      success: response.ok && result.success,
+      data: result.data,
+      message: result.message
+    };
+  } catch (error) {
+    console.error('Error fetching group details:', error);
+    return { success: false, message: 'Gagal mengambil detail grup' };
+  }
+};
+
+export const toggleGroupMute = async (conversationId: string, isMuted: boolean, token: string) => {
+  try {
+    console.log(`[API ChatMatkul] Toggling mute for ${conversationId} to ${isMuted}...`);
+    const response = await fetch(`${BASE_URL}/chat/subject/${conversationId}/mute`, {
+      method: 'PATCH',
+      headers: {
+        'Accept': '*/*',
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ isMuted })
+    });
+    const result = await response.json();
+    return { success: response.ok && result.success, message: result.message };
+  } catch (error) {
+    console.error('Error toggling group mute:', error);
+    return { success: false, message: 'Gagal mengubah status bungkam grup' };
+  }
+};
+
+export const markGroupAsRead = async (conversationId: string, token: string) => {
+  try {
+    console.log(`[API ChatMatkul] Marking group ${conversationId} as read...`);
+    const response = await fetch(`${BASE_URL}/chat-matkul/groups/${conversationId}/read`, {
+      method: 'PATCH',
+      headers: {
+        'Accept': '*/*',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    const result = await response.json();
+    return { success: response.ok && result.success };
+  } catch (error) {
+    console.error('Error marking group as read:', error);
     return { success: false };
   }
 };

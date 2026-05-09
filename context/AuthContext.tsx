@@ -20,6 +20,7 @@ type User = {
   avatar_url?: string;
   is_online?: boolean;
   email?: string;
+  role?: string; // 'dosen' or 'mahasiswa'
 };
 
 type AuthContextType = {
