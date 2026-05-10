@@ -92,8 +92,8 @@ export default function GroupChatRoomScreen() {
   
   const flatListRef = useRef<FlatList>(null);
   const inputAreaRef = useRef<View>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const remoteTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<any>(null);
+  const remoteTypingTimeoutRef = useRef<any>(null);
 
   // Fetch messages
   const fetchChatMessages = useCallback(async () => {
@@ -228,7 +228,7 @@ export default function GroupChatRoomScreen() {
       // Data: { groupId: "...", is_muted: true/false }
       if (data.groupId === id || data.conversationId === id) {
         console.log('[GroupChat] Mute update received:', data.is_muted);
-        setGroupDetail(prev => {
+        setGroupDetail((prev: any) => {
           if (!prev) return { is_muted: data.is_muted };
           return { ...prev, is_muted: data.is_muted };
         });
@@ -592,8 +592,8 @@ export default function GroupChatRoomScreen() {
     try {
       const result = await getGroupDetail(id as string, token as string);
       if (result.success) {
-        if (result.data?.members?.length > 0) {
-          console.log('[DEBUG DETAIL] First member data:', JSON.stringify(result.data.members[0]));
+        if (result.data) {
+          console.log('📦 [GROUP DETAIL DEBUG] Full data:', JSON.stringify(result.data));
         }
         setGroupDetail((prev: any) => ({
           ...result.data,
@@ -901,7 +901,7 @@ export default function GroupChatRoomScreen() {
         onRequestClose={() => setIsMenuVisible(false)}
       >
         <TouchableOpacity 
-          style={styles.modalOverlay} 
+          style={styles.menuModalOverlay} 
           activeOpacity={1} 
           onPress={() => setIsMenuVisible(false)}
         >
@@ -1031,9 +1031,11 @@ export default function GroupChatRoomScreen() {
                     <ActivityIndicator size="large" color={theme.tint} style={{ marginTop: 20 }} />
                   ) : (
                     groupDetail?.members?.map((member: any, index: number) => {
-                      // Robust role check
-                      const rawRole = (member.role || member.status || '').toLowerCase();
-                      const isDosenMember = rawRole === 'dosen' || rawRole === 'admin';
+                      // Prepared for upcoming BE update with 'role' field
+                      // Fallback to current 'admins' list check for backward compatibility
+                      const directRole = (member.role || '').toLowerCase();
+                      const isAdminList = groupDetail?.admins?.some((admin: any) => admin._id === member._id || admin.id === member._id);
+                      const isDosenMember = directRole === 'dosen' || directRole === 'admin' || isAdminList || (groupDetail?.creator?._id === member._id);
                       
                       const mName = member.nama || member.name || 'Anggota';
                       const mId = member.nim || member._id || member.id;
@@ -1055,21 +1057,16 @@ export default function GroupChatRoomScreen() {
                             )}
                           </View>
                           <View style={styles.memberInfoSmall}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <Text style={[styles.memberNameSmall, { color: theme.text }]}>{mName}</Text>
-                              {isDosenMember && (
-                                <View style={{ backgroundColor: theme.tint + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1, borderWidth: 1, borderColor: theme.tint + '30' }}>
-                                  <Text style={{ color: theme.tint, fontSize: 9, fontWeight: '800' }}>DOSEN</Text>
-                                </View>
-                              )}
-                            </View>
-                            <Text style={[styles.memberNimSmall, { color: theme.description }]}>
-                              {isDosenMember ? 'Dosen Pengampu' : (mId ? `NIM: ${mId}` : 'Mahasiswa')}
-                            </Text>
+                            <Text style={[styles.memberNameSmall, { color: theme.text }]}>{mName}</Text>
+                            {mId && (
+                              <Text style={[styles.memberNimSmall, { color: theme.description }]}>
+                                NIM: {mId}
+                              </Text>
+                            )}
                           </View>
                           {isDosenMember && (
-                            <View style={[styles.roleBadgeSmall, { backgroundColor: theme.tint + '15' }]}>
-                              <Text style={[styles.roleTextSmall, { color: theme.tint }]}>Admin</Text>
+                            <View style={[styles.roleBadgeSmall, { backgroundColor: theme.tint + '15', borderWidth: 1, borderColor: theme.tint + '30' }]}>
+                              <Text style={[styles.roleTextSmall, { color: theme.tint, fontSize: 10, fontWeight: 'bold' }]}>DOSEN</Text>
                             </View>
                           )}
                         </View>
@@ -1464,7 +1461,7 @@ export default function GroupChatRoomScreen() {
 
                 <View style={[styles.formActionRow, { marginTop: 12, paddingBottom: 16, gap: 10 }]}>
                     <TouchableOpacity 
-                      style={[styles.cancelBtn, { backgroundColor: theme.card, borderWeight: 1, borderColor: theme.border, borderWidth: 1, flex: 1, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' }]}
+                      style={[styles.cancelBtn, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: 1, flex: 1, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' }]}
                       onPress={() => {
                         setIsAssignmentUploadVisible(false);
                         setTimeout(() => {
@@ -1928,13 +1925,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  moreButton: {
+  menuMoreButton: {
     padding: 8,
     marginLeft: 5,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalOverlay: {
+  menuModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.3)',
     justifyContent: 'flex-start',
@@ -2022,6 +2019,21 @@ const styles = StyleSheet.create({
     color: '#D32F2F',
     fontSize: 12,
     fontWeight: '600',
+  },
+  avatarPlaceholderLarge: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadForm: {
+    gap: 15,
+  },
+  formLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 5,
   },
   floatingCardDivider: {
     height: 1,
