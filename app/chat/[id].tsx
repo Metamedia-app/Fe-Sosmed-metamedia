@@ -1,8 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
-  KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Keyboard
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  ScrollView, 
+  TextInput, 
+  KeyboardAvoidingView, 
+  Platform, 
+  ActivityIndicator,
+  Keyboard,
+  UIManager,
+  LayoutAnimation,
+  FlatList,
+  Alert,
+  Image,
+  Modal
 } from 'react-native';
+
+
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -21,6 +37,8 @@ export default function ChatRoomScreen() {
   const router = useRouter();
   const { token, user } = useAuth();
   const { lastEvent, socket } = useSocket();
+  const flatListRef = useRef<FlatList>(null);
+  const inputAreaRef = useRef<View>(null);
   
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
@@ -30,7 +48,6 @@ export default function ChatRoomScreen() {
   const [isTyping, setIsTyping] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
   
-  const flatListRef = useRef<FlatList>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const remoteTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -60,7 +77,53 @@ export default function ChatRoomScreen() {
 
   useEffect(() => {
     fetchChatMessages();
-  }, [fetchChatMessages]);
+  }, [fetchChatMessages, id, token]);
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        LayoutAnimation.configureNext({
+          duration: 300,
+          create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+          update: { type: LayoutAnimation.Types.easeInEaseOut },
+        });
+        setKeyboardHeight(e.endCoordinates.height);
+      }
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        LayoutAnimation.configureNext({
+          duration: 250,
+          update: { type: LayoutAnimation.Types.easeInEaseOut },
+        });
+        setKeyboardHeight(0);
+        setTimeout(() => {
+          inputAreaRef.current?.measureInWindow((x, y, width, height) => {
+            console.log('🔄🔄🔄 [FINAL RESET INBOX] Input Area Pos:', { x, y, width, height });
+          });
+        }, 150);
+      }
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Manual initial position measurement
+    const timer = setTimeout(() => {
+      inputAreaRef.current?.measureInWindow((x, y, width, height) => {
+        console.log('🚀🚀🚀 [INITIAL MOUNT INBOX] Input Area Pos:', { x, y, width, height });
+      });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!socket || !id || id === 'new') return;
@@ -343,104 +406,130 @@ export default function ChatRoomScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <KeyboardAvoidingView 
-        style={[styles.container, { backgroundColor: theme.background }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 25}
+      <View 
+        style={[
+          styles.container, 
+          { 
+            backgroundColor: theme.background,
+            paddingBottom: Math.max(0, keyboardHeight)
+          }
+        ]}
       >
-      <View style={[styles.header, { backgroundColor: theme.card, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <ArrowLeft size={24} color={theme.text} />
-        </TouchableOpacity>
-        <View style={styles.headerAvatarPlaceholder}>
-          <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{recipientName ? recipientName.charAt(0).toUpperCase() : 'C'}</Text>
+        <KeyboardAvoidingView 
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        >
+        <View style={{ flex: 1 }}>
+          <View style={[styles.header, { backgroundColor: theme.card, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }]}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+              <ArrowLeft size={24} color={theme.text} />
+            </TouchableOpacity>
+            <View style={styles.headerAvatarPlaceholder}>
+              <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{recipientName ? recipientName.charAt(0).toUpperCase() : 'C'}</Text>
+            </View>
+            <View style={styles.headerInfo}>
+              <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>{recipientName || 'Chat'}</Text>
+              <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
+                {remoteTyping ? 'Sedang mengetik...' : 'Online'}
+              </Text>
+            </View>
+            {id && id !== 'new' && (
+              <TouchableOpacity onPress={handleClearChat} style={styles.headerActionButton}>
+                <Trash2 size={20} color={theme.description} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Messages */}
+          {isLoading ? (
+            <View style={styles.centerContainer}>
+              <ActivityIndicator size="large" color={theme.tint} />
+            </View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(item, index) => item._id || index.toString()}
+              renderItem={renderMessage}
+              inverted
+              contentContainerStyle={styles.messagesList}
+              showsVerticalScrollIndicator={false}
+            />
+          )}
         </View>
-        <View style={styles.headerInfo}>
-          <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>{recipientName || 'Chat'}</Text>
-          <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
-            {remoteTyping ? 'Sedang mengetik...' : 'Online'}
-          </Text>
-        </View>
-        {id && id !== 'new' && (
-          <TouchableOpacity onPress={handleClearChat} style={styles.headerActionButton}>
-            <Trash2 size={20} color={theme.description} />
-          </TouchableOpacity>
+
+        {/* Selected Image Preview */}
+        {selectedImage && (
+          <View style={[styles.previewContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
+            <View style={styles.previewImageWrapper}>
+              <SecureMedia url={selectedImage.uri} token={token} style={styles.previewImage} />
+              <TouchableOpacity 
+                style={styles.removePreviewButton}
+                onPress={() => setSelectedImage(null)}
+              >
+                <Text style={styles.removePreviewText}>×</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
-      </View>
 
-      {/* Messages */}
-      {isLoading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={theme.tint} />
-        </View>
-      ) : (
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          keyExtractor={(item, index) => item._id || index.toString()}
-          renderItem={renderMessage}
-          inverted
-          contentContainerStyle={styles.messagesList}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-
-      {/* Selected Image Preview */}
-      {selectedImage && (
-        <View style={[styles.previewContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
-          <View style={styles.previewImageWrapper}>
-            <SecureMedia url={selectedImage.uri} token={token} style={styles.previewImage} />
-            <TouchableOpacity 
-              style={styles.removePreviewButton}
-              onPress={() => setSelectedImage(null)}
-            >
-              <Text style={styles.removePreviewText}>×</Text>
+        {/* Input Area */}
+        <View 
+          ref={inputAreaRef}
+          style={[
+            styles.inputContainer, 
+            { 
+              backgroundColor: theme.background, 
+              borderTopColor: theme.border,
+              paddingBottom: Platform.OS === 'ios' ? 25 : (keyboardHeight > 0 ? 10 : 0)
+            }
+          ]}
+          onLayout={(event) => {
+            const { x, y, width, height } = event.nativeEvent.layout;
+            console.log('⭐⭐⭐ [DEBUG LAYOUT INBOX] Input Area Pos:', { x, y, width, height });
+          }}
+        >
+          <View style={[styles.inputWrapper, { backgroundColor: theme.card }]}>
+            <TouchableOpacity style={styles.iconButton}>
+              <Smile size={24} color={theme.description} />
+            </TouchableOpacity>
+            
+            <TextInput
+              style={[styles.input, { color: theme.text }]}
+              placeholder="Message"
+              placeholderTextColor={theme.description}
+              value={inputText}
+              onChangeText={handleTyping}
+              multiline
+              maxLength={1000}
+            />
+            
+            <TouchableOpacity style={styles.iconButton} onPress={handlePickImage}>
+              <Paperclip size={20} color={theme.description} style={{ transform: [{ rotate: '-45deg' }] }} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]}>
+              <Camera size={20} color={theme.description} />
             </TouchableOpacity>
           </View>
-        </View>
-      )}
-
-      {/* Input Area */}
-      <View style={[styles.inputContainer, { backgroundColor: 'transparent' }]}>
-        <View style={[styles.inputWrapper, { backgroundColor: theme.card }]}>
-          <TouchableOpacity style={styles.iconButton}>
-            <Smile size={24} color={theme.description} />
-          </TouchableOpacity>
           
-          <TextInput
-            style={[styles.input, { color: theme.text }]}
-            placeholder="Message"
-            placeholderTextColor={theme.description}
-            value={inputText}
-            onChangeText={handleTyping}
-            multiline
-            maxLength={1000}
-          />
-          
-          <TouchableOpacity style={styles.iconButton} onPress={handlePickImage}>
-            <Paperclip size={20} color={theme.description} style={{ transform: [{ rotate: '-45deg' }] }} />
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]}>
-            <Camera size={20} color={theme.description} />
+          <TouchableOpacity 
+            style={[
+              styles.sendButton, 
+              { backgroundColor: theme.tint }
+            ]}
+            onPress={handleSendMessage}
+            disabled={(!inputText.trim() && !selectedImage) || isSending}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <Send size={20} color="#FFF" style={{ marginLeft: 3 }} />
+            )}
           </TouchableOpacity>
         </View>
-        
-        <TouchableOpacity 
-          style={[
-            styles.sendButton, 
-            { backgroundColor: theme.tint }
-          ]}
-          onPress={handleSendMessage}
-          disabled={(!inputText.trim() && !selectedImage) || isSending}
-        >
-          {isSending ? (
-             <ActivityIndicator size="small" color="#FFF" />
-          ) : (
-             <Send size={20} color="#FFF" style={{ marginLeft: 3 }} />
-          )}
-        </TouchableOpacity>
-      </View>
       </KeyboardAvoidingView>
+    </View>
     </>
   );
 }

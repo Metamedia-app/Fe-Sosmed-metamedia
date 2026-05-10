@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Keyboard,
-  Modal, ScrollView, Image
+  Modal, ScrollView, Image, TouchableWithoutFeedback, StatusBar, UIManager, LayoutAnimation, Animated
 } from 'react-native';
+
+
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -11,8 +13,14 @@ import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { getGroupMessages, sendGroupMessage, sendGroupTypingStatus, deleteGroupMessage, markGroupAsRead, getGroupDetail, toggleGroupMute } from '@/utils/chatMatkul';
 import { markAsRead } from '@/utils/chat';
-import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera, X, Users, BookOpen, BellOff, Bell, Lock, MoreVertical } from 'lucide-react-native';
+import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera, X, Users, BookOpen, BellOff, Bell, Lock, MoreVertical, Download, Plus, FileText, Calendar, User } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as WebBrowser from 'expo-web-browser';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as MediaLibrary from 'expo-media-library';
 import SecureMedia from '@/components/SecureMedia';
 import { format } from 'date-fns';
 
@@ -35,8 +43,39 @@ export default function GroupChatRoomScreen() {
   const [isTyping, setIsTyping] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState('');
   const [isDetailVisible, setIsDetailVisible] = useState(false);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
+  const [isSyllabusVisible, setIsSyllabusVisible] = useState(false);
+  const [isAssignmentsVisible, setIsAssignmentsVisible] = useState(false);
+  const [syllabusData, setSyllabusData] = useState<any[]>([]);
+  const [assignmentsData, setAssignmentsData] = useState<any[]>([]);
+  const [isLoadingSyllabus, setIsLoadingSyllabus] = useState(false);
+  const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [groupDetail, setGroupDetail] = useState<any>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  
+  // Syllabus & Assignment Upload State
+  const [isSyllabusUploadVisible, setIsSyllabusUploadVisible] = useState(false);
+  const [syllabusUploadTitle, setSyllabusUploadTitle] = useState('');
+  const [selectedSyllabusFile, setSelectedSyllabusFile] = useState<any>(null);
+  const [uploadingMeetingNumber, setUploadingMeetingNumber] = useState(1);
+  const [isUploadingSyllabus, setIsUploadingSyllabus] = useState(false);
+
+  const [isAssignmentUploadVisible, setIsAssignmentUploadVisible] = useState(false);
+  const [assignmentUploadTitle, setAssignmentUploadTitle] = useState('');
+  const [assignmentUploadDesc, setAssignmentUploadDesc] = useState('');
+  const [assignmentDueDate, setAssignmentDueDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
+  const [selectedAssignmentFile, setSelectedAssignmentFile] = useState<any>(null);
+  const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
+  
+  const [activeAttachment, setActiveAttachment] = useState<any>(null);
+  const [isPreviewVisible, setIsPreviewVisible] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [cachedUri, setCachedUri] = useState<string | null>(null);
+
+  // Check if any modal is currently visible to isolate keyboard behavior
+  const isAnyModalVisible = isMenuVisible || isDetailVisible || isSyllabusVisible || isAssignmentsVisible || isSyllabusUploadVisible || isAssignmentUploadVisible || isPreviewVisible;
   
   // Calculate if user is dosen based on group member data or global profile role
   const isDosen = useMemo(() => {
@@ -52,6 +91,7 @@ export default function GroupChatRoomScreen() {
   }, [groupDetail, user]);
   
   const flatListRef = useRef<FlatList>(null);
+  const inputAreaRef = useRef<View>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const remoteTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -95,6 +135,41 @@ export default function GroupChatRoomScreen() {
       });
     }
   }, [fetchChatMessages, id, token]);
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => setKeyboardHeight(e.endCoordinates.height)
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+        setTimeout(() => {
+          inputAreaRef.current?.measureInWindow((x, y, width, height) => {
+            console.log('🔄🔄🔄 [FINAL RESET GRUP] Input Area Pos:', { x, y, width, height });
+          });
+        }, 150);
+      }
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Manual initial position measurement
+    const timer = setTimeout(() => {
+      inputAreaRef.current?.measureInWindow((x, y, width, height) => {
+        console.log('🚀🚀🚀 [INITIAL MOUNT GRUP] Input Area Pos:', { x, y, width, height });
+      });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!socket || !id || id === 'new') return;
@@ -272,6 +347,244 @@ export default function GroupChatRoomScreen() {
     }
   };
 
+  const fetchSyllabus = async () => {
+    setIsLoadingSyllabus(true);
+    try {
+      const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/syllabus`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const result = await response.json();
+      if (result.success) setSyllabusData(result.data);
+    } catch (error) {
+      console.error('Fetch syllabus error:', error);
+    } finally {
+      setIsLoadingSyllabus(false);
+    }
+  };
+
+  const fetchAssignments = async () => {
+    setIsLoadingAssignments(true);
+    try {
+      const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/assignments`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const result = await response.json();
+      if (result.success) setAssignmentsData(result.data);
+    } catch (error) {
+      console.error('Fetch assignments error:', error);
+    } finally {
+      setIsLoadingAssignments(false);
+    }
+  };
+
+  const handleShowSyllabus = () => {
+    setIsMenuVisible(false);
+    setIsSyllabusVisible(true);
+    fetchSyllabus();
+  };
+
+  const handleShowAssignments = () => {
+    setIsMenuVisible(false);
+    setIsAssignmentsVisible(true);
+    fetchAssignments();
+  };
+
+  const handleDownloadAndOpenFile = async (url: string, fileName: string, silent: boolean = false) => {
+    if (!token) return;
+    if (!silent) setIsDownloading(true);
+    
+    try {
+      const prodUrl = url.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app');
+      const sanitizedFileName = fileName.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
+      const fileUri = `${FileSystem.cacheDirectory}${sanitizedFileName}`;
+      
+      // Jika sudah ada di cache, gunakan yang ada
+      let finalUri = fileUri;
+      const fileInfo = await FileSystem.getInfoAsync(fileUri);
+      
+      if (!fileInfo.exists) {
+        console.log('[DEBUG] Downloading file to cache:', prodUrl);
+        const downloadRes = await FileSystem.downloadAsync(prodUrl, fileUri, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (downloadRes.status !== 200) {
+          if (!silent) Alert.alert('Gagal', 'File tidak ditemukan di server.');
+          return null;
+        }
+        finalUri = downloadRes.uri;
+      }
+
+      setCachedUri(finalUri);
+
+      // Jika bukan mode silent, lanjutkan ke proses simpan/buka
+      if (!silent) {
+        const isImage = fileName.match(/\.(jpg|jpeg|png|gif)$/i);
+        
+        if (isImage) {
+          try {
+            const { status } = await MediaLibrary.requestPermissionsAsync(true);
+            if (status === 'granted') {
+              await MediaLibrary.saveToLibraryAsync(finalUri);
+              Alert.alert('Berhasil', 'File telah disimpan ke Galeri Foto.');
+            } else {
+              await Sharing.shareAsync(finalUri);
+            }
+          } catch (err) {
+            await Sharing.shareAsync(finalUri);
+          }
+        } else {
+          await Sharing.shareAsync(finalUri);
+        }
+      }
+      return finalUri;
+    } catch (error) {
+      if (!silent) {
+        console.error('File error:', error);
+        Alert.alert('Kesalahan', 'Gagal memproses file.');
+      }
+      return null;
+    } finally {
+      if (!silent) setIsDownloading(false);
+    }
+  };
+
+  // Pre-download when attachment changes
+  useEffect(() => {
+    if (activeAttachment && isPreviewVisible) {
+      setCachedUri(null);
+      handleDownloadAndOpenFile(activeAttachment.url, activeAttachment.name, true);
+    }
+  }, [activeAttachment, isPreviewVisible]);
+
+  const pickDocument = async (type: 'syllabus' | 'assignment') => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled) {
+        if (type === 'syllabus') setSelectedSyllabusFile(result.assets[0]);
+        else setSelectedAssignmentFile(result.assets[0]);
+      }
+    } catch (err) {
+      console.error('Pick document error:', err);
+    }
+  };
+
+  const handleUploadSyllabus = async () => {
+    if (!syllabusUploadTitle || !selectedSyllabusFile) {
+      Alert.alert('Peringatan', 'Harap isi judul dan pilih file.');
+      return;
+    }
+
+    setIsUploadingSyllabus(true);
+    const formData = new FormData();
+    formData.append('conversationId', id as string);
+    formData.append('meetingNumber', uploadingMeetingNumber.toString());
+    formData.append('title', syllabusUploadTitle);
+    
+    // @ts-ignore
+    formData.append('file', {
+      uri: selectedSyllabusFile.uri,
+      name: selectedSyllabusFile.name,
+      type: selectedSyllabusFile.mimeType || 'application/octet-stream'
+    });
+
+    try {
+      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/syllabus', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': '*/*',
+        },
+        body: formData,
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setIsSyllabusUploadVisible(false);
+        setTimeout(() => {
+          Alert.alert('Berhasil', result.message, [
+            { text: 'OK', onPress: () => setIsSyllabusVisible(true) }
+          ]);
+          setSyllabusUploadTitle('');
+          setSelectedSyllabusFile(null);
+          fetchSyllabus(); 
+        }, 300);
+      } else {
+        Alert.alert('Gagal', result.message || 'Gagal mengunggah materi');
+      }
+    } catch (error) {
+      console.error('Upload syllabus error:', error);
+      Alert.alert('Kesalahan', 'Gagal mengunggah materi.');
+    } finally {
+      setIsUploadingSyllabus(false);
+    }
+  };
+
+  const handleCreateAssignment = async () => {
+    if (!assignmentUploadTitle || !assignmentUploadDesc) {
+      Alert.alert('Peringatan', 'Harap isi judul dan deskripsi tugas.');
+      return;
+    }
+
+    setIsCreatingAssignment(true);
+    const formData = new FormData();
+    formData.append('conversationId', id as string);
+    formData.append('title', assignmentUploadTitle);
+    formData.append('description', assignmentUploadDesc);
+    formData.append('dueDate', assignmentDueDate.toISOString());
+    
+    if (selectedAssignmentFile) {
+      // @ts-ignore
+      formData.append('file', {
+        uri: selectedAssignmentFile.uri,
+        name: selectedAssignmentFile.name,
+        type: selectedAssignmentFile.mimeType || 'application/octet-stream'
+      });
+    }
+
+    try {
+      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/assignments', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': '*/*',
+        },
+        body: formData,
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setIsAssignmentUploadVisible(false); // Tutup modal upload dulu
+        
+        setTimeout(() => {
+          Alert.alert('Berhasil', result.message, [
+            { 
+              text: 'OK', 
+              onPress: () => {
+                setIsAssignmentsVisible(true); // Buka modal list tugas setelah alert ditutup
+                fetchAssignments();
+              }
+            }
+          ]);
+          
+          setAssignmentUploadTitle('');
+          setAssignmentUploadDesc('');
+          setSelectedAssignmentFile(null);
+        }, 300); // Beri nafas untuk transisi modal
+      } else {
+        Alert.alert('Gagal', result.message || 'Gagal membuat tugas');
+      }
+    } catch (error) {
+      console.error('Create assignment error:', error);
+      Alert.alert('Kesalahan', 'Gagal membuat tugas.');
+    } finally {
+      setIsCreatingAssignment(false);
+    }
+  };
+
   const handleShowDetail = async () => {
     if (!id || id === 'new') return;
     setIsDetailVisible(true);
@@ -279,7 +592,9 @@ export default function GroupChatRoomScreen() {
     try {
       const result = await getGroupDetail(id as string, token as string);
       if (result.success) {
-        // Merge the new data but PRESERVE the current is_muted state
+        if (result.data?.members?.length > 0) {
+          console.log('[DEBUG DETAIL] First member data:', JSON.stringify(result.data.members[0]));
+        }
         setGroupDetail((prev: any) => ({
           ...result.data,
           is_muted: prev?.is_muted ?? result.data?.is_muted
@@ -293,14 +608,42 @@ export default function GroupChatRoomScreen() {
   };
 
   const handleToggleMute = async () => {
-    if (!id || !groupDetail || !token) return;
+    console.log('🔊 [MUTE DEBUG] Starting toggle mute for group:', id);
+    if (!id || !groupDetail || !token) {
+      console.log('⚠️ [MUTE DEBUG] Missing requirements:', { id: !!id, groupDetail: !!groupDetail, token: !!token });
+      return;
+    }
     const newMuteStatus = !groupDetail.is_muted;
-    const result = await toggleGroupMute(id as string, newMuteStatus, token);
-    if (result.success) {
-      setGroupDetail({ ...groupDetail, is_muted: newMuteStatus });
-      Alert.alert('Berhasil', newMuteStatus ? 'Grup berhasil dibungkam' : 'Grup berhasil dibuka');
-    } else {
-      Alert.alert('Gagal', result.message || 'Gagal mengubah status grup');
+    console.log('🔄 [MUTE DEBUG] Current mute status:', groupDetail.is_muted, '-> Target status:', newMuteStatus);
+    
+    try {
+      const url = `https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/mute`;
+      console.log('📡 [MUTE DEBUG] Patching to URL:', url);
+      
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ isMuted: newMuteStatus })
+      });
+      
+      console.log('📥 [MUTE DEBUG] Response status:', response.status);
+      const result = await response.json();
+      console.log('📦 [MUTE DEBUG] Response body:', JSON.stringify(result));
+      
+      if (result.success) {
+        console.log('✅ [MUTE DEBUG] Success! Updating state.');
+        setGroupDetail({ ...groupDetail, is_muted: newMuteStatus });
+        Alert.alert('Berhasil', newMuteStatus ? 'Grup berhasil di Mute' : 'Grup berhasil di Unmute');
+      } else {
+        console.log('❌ [MUTE DEBUG] Server returned failure:', result.message);
+        Alert.alert('Gagal', result.message || 'Gagal mengubah status grup');
+      }
+    } catch (error) {
+      console.error('🔥 [MUTE DEBUG] Execution error:', error);
+      Alert.alert('Kesalahan', 'Gagal mengubah status bungkaman.');
     }
   };
 
@@ -413,217 +756,846 @@ export default function GroupChatRoomScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <KeyboardAvoidingView 
-        style={[styles.container, { backgroundColor: theme.background }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 25}
+      <View 
+        style={[
+          styles.container, 
+          { 
+            backgroundColor: theme.background,
+            paddingBottom: isAnyModalVisible ? 0 : Math.max(0, keyboardHeight)
+          }
+        ]}
       >
-        <View style={[styles.header, { backgroundColor: theme.background, borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <ArrowLeft size={24} color={theme.text} />
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          activeOpacity={0.7}
-          onPress={handleShowDetail}
-          style={styles.headerInfo}
+        <KeyboardAvoidingView 
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+          enabled={!isAnyModalVisible}
         >
-          <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>
-            {groupName || 'Grup Chat'}
-          </Text>
-          <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
-            {remoteTyping || 'Klik untuk detail grup'}
-          </Text>
-        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <View style={[styles.header, { backgroundColor: theme.card, borderBottomColor: theme.border, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3 }]}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+              <ArrowLeft size={24} color={theme.text} />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              activeOpacity={0.7}
+              onPress={handleShowDetail}
+              style={styles.headerInfo}
+            >
+              <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>
+                {groupName || 'Grup Chat'}
+                {groupDetail?.is_muted && <Text style={{ color: '#D32F2F', fontSize: 14 }}> 🔇</Text>}
+              </Text>
+              <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
+                {remoteTyping || 'Klik untuk detail grup'}
+              </Text>
+            </TouchableOpacity>
 
-        {isDosen && (
-          <TouchableOpacity 
-            onPress={() => {
-              Alert.alert(
-                groupDetail?.is_muted ? 'Buka Pembungkaman' : 'Bungkam Grup',
-                `Apakah Anda yakin ingin ${groupDetail?.is_muted ? 'membuka' : 'membungkam'} grup ini?`,
-                [
-                  { text: 'Batal', style: 'cancel' },
-                  { text: 'Ya, Lanjutkan', onPress: handleToggleMute }
-                ]
-              );
-            }}
-            style={styles.moreButton}
-          >
-            {groupDetail?.is_muted ? (
-              <BellOff size={22} color="#D32F2F" />
-            ) : (
+            <TouchableOpacity 
+              onPress={() => setIsMenuVisible(true)}
+              style={styles.moreButton}
+            >
               <MoreVertical size={24} color={theme.text} />
-            )}
-          </TouchableOpacity>
-        )}
-      </View>
+            </TouchableOpacity>
+          </View>
 
-      {/* Group Detail Modal */}
-      <Modal
-        visible={isDetailVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setIsDetailVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.background }]}>
-            <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>Detail Grup</Text>
-              <TouchableOpacity onPress={() => setIsDetailVisible(false)}>
-                <X size={24} color={theme.text} />
+          {/* Messages */}
+          {isLoading ? (
+            <View style={styles.centerContainer}>
+              <ActivityIndicator size="large" color={theme.tint} />
+            </View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(item, index) => item._id || index.toString()}
+              renderItem={renderMessage}
+              inverted
+              contentContainerStyle={styles.messagesList}
+              showsVerticalScrollIndicator={false}
+            />
+          )}
+        </View>
+
+        {/* Selected Image Preview */}
+        {selectedImage && (
+          <View style={[styles.previewContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
+            <View style={styles.previewImageWrapper}>
+              <SecureMedia url={selectedImage.uri} token={token} style={styles.previewImage} />
+              <TouchableOpacity 
+                style={styles.removePreviewButton}
+                onPress={() => setSelectedImage(null)}
+              >
+                <Text style={styles.removePreviewText}>×</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        )}
 
-            {isLoadingDetail ? (
-              <View style={styles.modalLoading}>
-                <ActivityIndicator size="large" color={theme.tint} />
+        {/* Input Area */}
+        {groupDetail?.is_muted && !isDosen ? (
+          <View style={[styles.mutedContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
+            <Lock size={20} color={theme.description} />
+            <Text style={[styles.mutedText, { color: theme.description }]}>
+              Hanya dosen yang dapat mengirim pesan
+            </Text>
+          </View>
+        ) : (
+          <View 
+            ref={inputAreaRef}
+            style={[
+              styles.inputContainer, 
+              { 
+                backgroundColor: theme.background, 
+                borderTopColor: theme.border,
+                paddingBottom: Platform.OS === 'ios' ? 25 : (isAnyModalVisible ? 0 : (keyboardHeight > 0 ? 10 : 0))
+              }
+            ]}
+          >
+            <View style={[styles.inputWrapper, { backgroundColor: theme.card }]}>
+              <TouchableOpacity style={styles.iconButton}>
+                <Smile size={24} color={theme.description} />
+              </TouchableOpacity>
+              
+              <TextInput
+                style={[styles.input, { color: theme.text }]}
+                placeholder="Tulis pesan..."
+                placeholderTextColor={theme.description}
+                value={inputText}
+                onChangeText={handleTyping}
+                multiline
+                maxLength={1000}
+              />
+              
+              <TouchableOpacity style={styles.iconButton} onPress={handlePickImage}>
+                <Paperclip size={20} color={theme.description} style={{ transform: [{ rotate: '-45deg' }] }} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]}>
+                <Camera size={20} color={theme.description} />
+              </TouchableOpacity>
+            </View>
+            
+            <TouchableOpacity 
+              style={[
+                styles.sendButton, 
+                { backgroundColor: theme.tint }
+              ]}
+              onPress={handleSendMessage}
+              disabled={(!inputText.trim() && !selectedImage) || isSending}
+            >
+              {isSending ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                 <Send size={20} color="#FFF" style={{ marginLeft: 3 }} />
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+
+      {/* Action Menu Modal */}
+      <Modal
+        visible={isMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsMenuVisible(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setIsMenuVisible(false)}
+        >
+          <View style={[styles.menuContent, { backgroundColor: theme.card }]}>
+            {isDosen && (
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => {
+                setIsMenuVisible(false);
+                setTimeout(() => {
+                  Alert.alert(
+                    groupDetail?.is_muted ? 'Unmute Grup' : 'Mute Grup',
+                    `Apakah Anda yakin ingin ${groupDetail?.is_muted ? 'Unmute' : 'Mute'} grup ini?`,
+                    [
+                      { text: 'Batal', style: 'cancel' },
+                      { text: 'Ya, Lanjutkan', onPress: handleToggleMute }
+                    ]
+                  );
+                }, 100);
+              }}
+            >
+              <View style={[styles.menuIconContainer, { backgroundColor: groupDetail?.is_muted ? '#E8F5E9' : '#FFEBEE' }]}>
+                {groupDetail?.is_muted ? (
+                  <Bell size={18} color="#4CAF50" />
+                ) : (
+                  <BellOff size={18} color="#D32F2F" />
+                )}
               </View>
-            ) : groupDetail ? (
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={styles.groupInfoCard}>
-                  <View style={[styles.groupIconContainer, { backgroundColor: theme.tint + '20' }]}>
-                    <Users size={40} color={theme.tint} />
-                  </View>
-                  <Text style={[styles.groupNameText, { color: theme.text }]}>{groupDetail.name}</Text>
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    {groupDetail.subject_info && (
-                      <View style={styles.subjectInfoBadge}>
-                        <BookOpen size={14} color={theme.description} />
-                        <Text style={[styles.subjectCode, { color: theme.description }]}>
-                          {groupDetail.subject_info.code}
-                        </Text>
-                      </View>
-                    )}
-                    {groupDetail.is_muted && (
-                      <View style={[styles.subjectInfoBadge, { backgroundColor: '#FFEBEE' }]}>
-                        <BellOff size={14} color="#D32F2F" />
-                        <Text style={[styles.subjectCode, { color: "#D32F2F" }]}>Dibungkam</Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-
-                <View style={styles.sectionHeader}>
-                  <Text style={[styles.sectionTitle, { color: theme.tint }]}>
-                    Anggota ({groupDetail.members?.length || 0})
-                  </Text>
-                </View>
-
-                {groupDetail.members?.map((member: any) => (
-                  <View key={member._id} style={[styles.memberItem, { borderBottomColor: theme.border }]}>
-                    {member.avatar_url ? (
-                      <SecureMedia url={member.avatar_url} token={token} style={styles.memberAvatar} />
-                    ) : (
-                      <View style={[styles.memberAvatar, { backgroundColor: theme.border, justifyContent: 'center', alignItems: 'center' }]}>
-                        <Text style={{ color: theme.description, fontWeight: 'bold' }}>
-                          {member.nama?.charAt(0)}
-                        </Text>
-                      </View>
-                    )}
-                    <View style={styles.memberInfo}>
-                      <Text style={[styles.memberName, { color: theme.text }]}>{member.nama}</Text>
-                      <Text style={[styles.memberNim, { color: theme.description }]}>{member.nim}</Text>
-                    </View>
-                    {member.role === 'dosen' && (
-                      <View style={[styles.roleBadge, { backgroundColor: '#FF9800' }]}>
-                        <Text style={styles.roleText}>Dosen</Text>
-                      </View>
-                    )}
-                  </View>
-                ))}
-              </ScrollView>
-            ) : (
-              <View style={styles.modalError}>
-                <Text style={{ color: theme.description }}>Gagal memuat detail grup</Text>
-              </View>
+              <Text style={[styles.menuItemText, { color: theme.text }]}>
+                {groupDetail?.is_muted ? 'Unmute Grup' : 'Mute Grup'}
+              </Text>
+            </TouchableOpacity>
             )}
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={handleShowAssignments}
+            >
+              <View style={[styles.menuIconContainer, { backgroundColor: '#E3F2FD' }]}>
+                <BookOpen size={18} color="#2196F3" />
+              </View>
+              <Text style={[styles.menuItemText, { color: theme.text }]}>Tugas Kuliah</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={handleShowSyllabus}
+            >
+              <View style={[styles.menuIconContainer, { backgroundColor: '#F3E5F5' }]}>
+                <FileText size={18} color="#9C27B0" />
+              </View>
+              <Text style={[styles.menuItemText, { color: theme.text }]}>Materi Silabus</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => {
+              setIsMenuVisible(false);
+              handleShowDetail();
+            }}>
+              <View style={[styles.menuIconContainer, { backgroundColor: '#F3E5F5' }]}>
+                <Users size={18} color="#9C27B0" />
+              </View>
+              <Text style={[styles.menuItemText, { color: theme.text }]}>Detail Anggota</Text>
+            </TouchableOpacity>
+            
+            <View style={[styles.menuDivider, { backgroundColor: theme.border }]} />
+            
+            <TouchableOpacity style={styles.menuItem} onPress={() => setIsMenuVisible(false)}>
+              <View style={[styles.menuIconContainer, { backgroundColor: '#FAFAFA' }]}>
+                <MoreVertical size={18} color="#757575" />
+              </View>
+              <Text style={[styles.menuItemText, { color: theme.text }]}>Lainnya...</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Group Detail Modal (Floating Card) */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isDetailVisible}
+        onRequestClose={() => setIsDetailVisible(false)}
+      >
+        <View style={styles.floatingModalOverlay}>
+          {/* Background overlay to close modal */}
+          <TouchableWithoutFeedback onPress={() => setIsDetailVisible(false)}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+
+          {/* The Actual Card - Separated from touchable background */}
+          <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
+            {/* Header Card */}
+            <View style={styles.floatingCardHeader}>
+              <View style={[styles.avatarPlaceholderLarge, { backgroundColor: theme.tint + '20' }]}>
+                <Users size={32} color={theme.tint} />
+              </View>
+              <Text style={[styles.floatingCardTitle, { color: theme.text }]}>{groupDetail?.name}</Text>
+              {groupDetail?.subject_info && (
+                <Text style={[styles.floatingCardSubtitle, { color: theme.description }]}>
+                  {groupDetail.subject_info.code} • {groupDetail.subject_info.academic_year}
+                </Text>
+              )}
+              {groupDetail?.is_muted && (
+                <View style={[styles.muteStatusBadge, { backgroundColor: '#FFEBEE', borderWidth: 1, borderColor: '#FFCDD2' }]}>
+                  <BellOff size={14} color="#D32F2F" />
+                  <Text style={[styles.muteStatusText, { color: '#D32F2F' }]}>Mode Pengumuman Aktif (Muted)</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
+
+            {/* Scrollable Members List */}
+            <View style={styles.membersSection}>
+              <Text style={[styles.sectionLabel, { color: theme.tint }]}>
+                ANGGOTA ({groupDetail?.members?.length || 0})
+              </Text>
+              
+              <View style={{ flex: 1 }}>
+                <ScrollView 
+                  style={styles.membersScrollView} 
+                  contentContainerStyle={{ flexGrow: 1 }}
+                  showsVerticalScrollIndicator={false}
+                  nestedScrollEnabled={true}
+                >
+                  {isLoadingDetail ? (
+                    <ActivityIndicator size="large" color={theme.tint} style={{ marginTop: 20 }} />
+                  ) : (
+                    groupDetail?.members?.map((member: any, index: number) => {
+                      // Robust role check
+                      const rawRole = (member.role || member.status || '').toLowerCase();
+                      const isDosenMember = rawRole === 'dosen' || rawRole === 'admin';
+                      
+                      const mName = member.nama || member.name || 'Anggota';
+                      const mId = member.nim || member._id || member.id;
+                      const avatarUrl = member.avatar_url || member.avatar;
+                      
+                      return (
+                        <View key={index} style={styles.floatingMemberItem}>
+                          <View style={styles.memberAvatarContainer}>
+                            {avatarUrl ? (
+                              <SecureMedia 
+                                url={avatarUrl.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app')} 
+                                token={token} 
+                                style={styles.memberAvatarSmall} 
+                              />
+                            ) : (
+                              <View style={[styles.memberAvatarSmall, { backgroundColor: theme.tint + '10', justifyContent: 'center', alignItems: 'center' }]}>
+                                <User size={18} color={theme.tint} />
+                              </View>
+                            )}
+                          </View>
+                          <View style={styles.memberInfoSmall}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={[styles.memberNameSmall, { color: theme.text }]}>{mName}</Text>
+                              {isDosenMember && (
+                                <View style={{ backgroundColor: theme.tint + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1, borderWidth: 1, borderColor: theme.tint + '30' }}>
+                                  <Text style={{ color: theme.tint, fontSize: 9, fontWeight: '800' }}>DOSEN</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={[styles.memberNimSmall, { color: theme.description }]}>
+                              {isDosenMember ? 'Dosen Pengampu' : (mId ? `NIM: ${mId}` : 'Mahasiswa')}
+                            </Text>
+                          </View>
+                          {isDosenMember && (
+                            <View style={[styles.roleBadgeSmall, { backgroundColor: theme.tint + '15' }]}>
+                              <Text style={[styles.roleTextSmall, { color: theme.tint }]}>Admin</Text>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              </View>
+            </View>
           </View>
         </View>
       </Modal>
 
-      {/* Messages */}
-      {isLoading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={theme.tint} />
-        </View>
-      ) : (
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          keyExtractor={(item, index) => item._id || index.toString()}
-          renderItem={renderMessage}
-          inverted
-          contentContainerStyle={styles.messagesList}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-
-      {/* Selected Image Preview */}
-      {selectedImage && (
-        <View style={[styles.previewContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
-          <View style={styles.previewImageWrapper}>
-            <SecureMedia url={selectedImage.uri} token={token} style={styles.previewImage} />
+      {/* Attachment Preview Modal */}
+      <Modal
+        visible={isPreviewVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setIsPreviewVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          {/* Header Bar */}
+          <View style={{ 
+            flexDirection: 'row', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            paddingTop: Platform.OS === 'ios' ? 60 : 40,
+            paddingHorizontal: 20,
+            paddingBottom: 20,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 10
+          }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#FFF', fontSize: 16, fontWeight: 'bold' }} numberOfLines={1}>
+                {activeAttachment?.name}
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
+                Pratinjau Lampiran
+              </Text>
+            </View>
             <TouchableOpacity 
-              style={styles.removePreviewButton}
-              onPress={() => setSelectedImage(null)}
+              style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: 8, borderRadius: 20 }}
+              onPress={() => setIsPreviewVisible(false)}
             >
-              <Text style={styles.removePreviewText}>×</Text>
+              <X size={20} color="#FFF" />
             </TouchableOpacity>
           </View>
-        </View>
-      )}
 
-      {/* Input Area */}
-      {groupDetail?.is_muted && !isDosen ? (
-        <View style={[styles.mutedContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
-          <Lock size={20} color={theme.description} />
-          <Text style={[styles.mutedText, { color: theme.description }]}>
-            Hanya dosen yang dapat mengirim pesan
-          </Text>
-        </View>
-      ) : (
-        <View style={[styles.inputContainer, { backgroundColor: theme.background, borderTopColor: theme.border }]}>
-          <View style={[styles.inputWrapper, { backgroundColor: theme.card }]}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Smile size={24} color={theme.description} />
-            </TouchableOpacity>
-            
-            <TextInput
-              style={[styles.input, { color: theme.text }]}
-              placeholder="Tulis pesan..."
-              placeholderTextColor={theme.description}
-              value={inputText}
-              onChangeText={handleTyping}
-              multiline
-              maxLength={1000}
-            />
-            
-            <TouchableOpacity style={styles.iconButton} onPress={handlePickImage}>
-              <Paperclip size={20} color={theme.description} style={{ transform: [{ rotate: '-45deg' }] }} />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]}>
-              <Camera size={20} color={theme.description} />
-            </TouchableOpacity>
-          </View>
-          
-          <TouchableOpacity 
-            style={[
-              styles.sendButton, 
-              { backgroundColor: theme.tint }
-            ]}
-            onPress={handleSendMessage}
-            disabled={(!inputText.trim() && !selectedImage) || isSending}
-          >
-            {isSending ? (
-               <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-               <Send size={20} color="#FFF" style={{ marginLeft: 3 }} />
+          {/* Image Content */}
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            {activeAttachment && (
+              <SecureMedia 
+                url={activeAttachment.url.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app')} 
+                token={token} 
+                style={{ width: '100%', height: '80%' }}
+                // @ts-ignore
+                contentFit="contain"
+              />
             )}
-          </TouchableOpacity>
+          </View>
+
+          {/* Footer Actions */}
+          <View style={{ 
+            paddingBottom: Platform.OS === 'ios' ? 50 : 30,
+            paddingHorizontal: 30,
+            paddingTop: 20,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            borderTopLeftRadius: 30,
+            borderTopRightRadius: 30,
+            alignItems: 'center'
+          }}>
+            <TouchableOpacity 
+              style={{ 
+                flexDirection: 'row', 
+                alignItems: 'center', 
+                backgroundColor: theme.tint, 
+                paddingHorizontal: 40, 
+                paddingVertical: 15, 
+                borderRadius: 30,
+                gap: 12,
+                shadowColor: theme.tint,
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.4,
+                shadowRadius: 8,
+                elevation: 10
+              }}
+              onPress={() => handleDownloadAndOpenFile(activeAttachment.url, activeAttachment.name)}
+              disabled={isDownloading}
+            >
+              {isDownloading ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Download size={20} color="#FFF" />
+                  <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 16 }}>Simpan Ke HP</Text>
+                </>
+              )}
+            </TouchableOpacity>
+            
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 15 }}>
+              File akan disimpan secara permanen di folder Download/Galeri Anda
+            </Text>
+          </View>
         </View>
-      )}
+      </Modal>
+      {/* Syllabus Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isSyllabusVisible}
+        onRequestClose={() => setIsSyllabusVisible(false)}
+      >
+        <View style={styles.floatingModalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setIsSyllabusVisible(false)}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+
+          <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
+            <View style={styles.floatingCardHeader}>
+              <View style={[styles.floatingIconContainer, { backgroundColor: '#F3E5F5' }]}>
+                <FileText size={24} color="#9C27B0" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.floatingCardTitle, { color: theme.text, textAlign: 'left' }]}>Materi Silabus</Text>
+                <Text style={[styles.floatingCardSubtitle, { color: theme.description, textAlign: 'left' }]}>Materi Pertemuan 1-14</Text>
+              </View>
+            </View>
+
+            <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
+
+            <View style={styles.membersSection}>
+              <ScrollView 
+                style={styles.membersScrollView} 
+                contentContainerStyle={{ flexGrow: 1 }}
+                showsVerticalScrollIndicator={false}
+                nestedScrollEnabled={true}
+              >
+                {isLoadingSyllabus ? (
+                  <ActivityIndicator size="large" color={theme.tint} style={{ marginVertical: 20 }} />
+                ) : Array.from({ length: 14 }, (_, i) => i + 1).map((num) => {
+                  const material = syllabusData.find(s => s.meeting_number === num);
+                  return (
+                    <View key={num} style={styles.syllabusItem}>
+                      <View style={[styles.meetingBadge, { backgroundColor: material ? '#E8F5E9' : '#F5F5F5' }]}>
+                        <Text style={[styles.meetingText, { color: material ? '#2E7D32' : '#757575' }]}>{num}</Text>
+                      </View>
+                      <View style={styles.syllabusInfo}>
+                        <Text style={[styles.syllabusTitle, { color: theme.text }]} numberOfLines={1}>
+                          {material?.title || `Materi Pertemuan ${num}`}
+                        </Text>
+                        <Text style={[styles.syllabusStatus, { color: material ? '#2E7D32' : theme.description }]}>
+                          {material ? 'Materi tersedia' : 'Belum ada materi'}
+                        </Text>
+                      </View>
+                      {material && (
+                        <TouchableOpacity 
+                          style={[styles.downloadButton, { backgroundColor: theme.tint + '15' }]}
+                          onPress={() => {
+                            const rawUrl = material.attachments?.[0]?.url;
+                            if (rawUrl) {
+                              handleDownloadAndOpenFile(rawUrl, material.attachments[0].name || `Materi-${num}.pdf`);
+                            }
+                          }}
+                        >
+                          <Download size={18} color={theme.tint} />
+                        </TouchableOpacity>
+                      )}
+                      {isDosen && !material && (
+                        <TouchableOpacity 
+                          style={[styles.uploadButtonSmall, { backgroundColor: theme.border }]}
+                          onPress={() => {
+                            setUploadingMeetingNumber(num);
+                            setIsSyllabusUploadVisible(true);
+                            setIsSyllabusVisible(false);
+                          }}
+                        >
+                          <Plus size={18} color={theme.text} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Syllabus Upload Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isSyllabusUploadVisible}
+        onRequestClose={() => setIsSyllabusUploadVisible(false)}
+      >
+        <View style={styles.floatingModalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setIsSyllabusUploadVisible(false)}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+          <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={{ flex: 1 }}
+            >
+            <View style={styles.floatingCardHeader}>
+              <View style={[styles.floatingIconContainer, { backgroundColor: '#F3E5F5' }]}>
+                <Plus size={24} color="#9C27B0" />
+              </View>
+              <View>
+                <Text style={[styles.floatingCardTitle, { color: theme.text }]}>Unggah Materi</Text>
+                <Text style={[styles.floatingCardSubtitle, { color: theme.description }]}>Tambahkan materi untuk pertemuan ini</Text>
+              </View>
+            </View>
+
+            <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
+
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.uploadForm}>
+                <Text style={[styles.formLabel, { color: theme.text }]}>Judul Materi</Text>
+                <TextInput 
+                  style={[styles.formInput, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
+                  placeholder="Contoh: Pengenalan Logika"
+                  placeholderTextColor={theme.description}
+                  value={syllabusUploadTitle}
+                  onChangeText={setSyllabusUploadTitle}
+                />
+
+                <Text style={[styles.formLabel, { color: theme.text, marginTop: 15 }]}>Pilih File</Text>
+                <TouchableOpacity 
+                  style={[styles.filePickerBtn, { borderColor: theme.tint, backgroundColor: theme.tint + '10' }]}
+                  onPress={() => pickDocument('syllabus')}
+                >
+                  <Paperclip size={20} color={theme.tint} />
+                  <Text style={[styles.filePickerText, { color: theme.tint }]} numberOfLines={1}>
+                    {selectedSyllabusFile ? selectedSyllabusFile.name : 'Pilih Lampiran (PDF/Doc)'}
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={styles.formActionRow}>
+                  <TouchableOpacity 
+                    style={[styles.cancelBtn, { backgroundColor: theme.border }]}
+                    onPress={() => {
+                      setIsSyllabusUploadVisible(false);
+                      setTimeout(() => {
+                        setIsSyllabusVisible(true);
+                      }, 100);
+                    }}
+                  >
+                    <Text style={[styles.cancelBtnText, { color: theme.text }]}>Batal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.submitBtn, { backgroundColor: theme.tint }]}
+                    onPress={handleUploadSyllabus}
+                    disabled={isUploadingSyllabus}
+                  >
+                    {isUploadingSyllabus ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Text style={styles.submitBtnText}>Unggah</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+            </KeyboardAvoidingView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Assignment Upload Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isAssignmentUploadVisible}
+        onRequestClose={() => setIsAssignmentUploadVisible(false)}
+      >
+        <View style={styles.floatingModalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setIsAssignmentUploadVisible(false)}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+          <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
+            <View style={styles.floatingCardHeader}>
+              <View style={[styles.floatingIconContainer, { backgroundColor: '#E8F5E9' }]}>
+                <Plus size={24} color="#4CAF50" />
+              </View>
+              <View>
+                <Text style={[styles.floatingCardTitle, { color: theme.text }]}>Buat Tugas Baru</Text>
+                <Text style={[styles.floatingCardSubtitle, { color: theme.description }]}>Berikan penugasan baru untuk mahasiswa</Text>
+              </View>
+            </View>
+
+            <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
+
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={{ flex: 1 }}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+            >
+              <ScrollView 
+                style={{ flex: 1 }} 
+                contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 16 }}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                scrollEnabled={false}
+              >
+                <View style={[styles.uploadForm, { marginTop: 4 }]}>
+                  <View style={{ marginBottom: 0 }}>
+                    <Text style={[styles.formLabel, { color: theme.text, fontWeight: '600', marginBottom: 6, fontSize: 13 }]}>Judul Tugas</Text>
+                    <TextInput 
+                      style={[styles.formInput, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border, height: 44, borderRadius: 12 }]}
+                      placeholder="Masukkan judul tugas..."
+                      placeholderTextColor={theme.description}
+                      value={assignmentUploadTitle}
+                      onChangeText={setAssignmentUploadTitle}
+                    />
+                  </View>
+
+                  <View style={{ marginBottom: 10 }}>
+                    <Text style={[styles.formLabel, { color: theme.text, fontWeight: '600', marginBottom: 6, fontSize: 13 }]}>Deskripsi</Text>
+                    <TextInput 
+                      style={[styles.formInput, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border, height: 55, textAlignVertical: 'top', borderRadius: 12, paddingTop: 10 }]}
+                      placeholder="Tulis instruksi tugas di sini..."
+                      placeholderTextColor={theme.description}
+                      value={assignmentUploadDesc}
+                      onChangeText={setAssignmentUploadDesc}
+                      multiline
+                    />
+                  </View>
+                  
+                  <View style={{ marginBottom: 10 }}>
+                    <Text style={[styles.formLabel, { color: theme.text, fontWeight: '600', marginBottom: 6, fontSize: 13 }]}>Tenggat Waktu (Deadline)</Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <TouchableOpacity 
+                        style={[styles.datePickerBtn, { flex: 1, borderColor: theme.border, backgroundColor: theme.background, height: 44, borderRadius: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }]}
+                        onPress={() => { setPickerMode('date'); setShowDatePicker(true); }}
+                      >
+                        <Calendar size={16} color={theme.tint} />
+                        <Text style={[styles.datePickerText, { color: theme.text, fontSize: 13, marginLeft: 8 }]}>
+                          {assignmentDueDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity 
+                        style={[styles.datePickerBtn, { flex: 1, borderColor: theme.border, backgroundColor: theme.background, height: 44, borderRadius: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }]}
+                        onPress={() => { setPickerMode('time'); setShowDatePicker(true); }}
+                      >
+                        <Clock size={16} color={theme.tint} />
+                        <Text style={[styles.datePickerText, { color: theme.text, fontSize: 13, marginLeft: 8 }]}>
+                          {assignmentDueDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {showDatePicker && (
+                    <DateTimePicker
+                      value={assignmentDueDate}
+                      mode={pickerMode}
+                      display="default"
+                      onChange={(event, selectedDate) => {
+                        setShowDatePicker(false);
+                        if (event.type === 'set' && selectedDate) {
+                          const newDate = new Date(assignmentDueDate);
+                          if (pickerMode === 'date') {
+                            newDate.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+                          } else {
+                            newDate.setHours(selectedDate.getHours(), selectedDate.getMinutes());
+                          }
+                          setAssignmentDueDate(newDate);
+                        }
+                      }}
+                    />
+                  )}
+
+                  <View style={{ marginBottom: 5 }}>
+                    <Text style={[styles.formLabel, { color: theme.text, fontWeight: '600', marginBottom: 6, fontSize: 13 }]}>Lampiran Materi (Opsional)</Text>
+                    <TouchableOpacity 
+                      style={[styles.filePickerBtn, { borderColor: theme.tint, borderStyle: 'dashed', height: 44, borderRadius: 12, backgroundColor: theme.tint + '05', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 0, justifyContent: 'flex-start', borderWidth: 1 }]}
+                      onPress={() => pickDocument('assignment')}
+                    >
+                      <Paperclip size={18} color={theme.tint} />
+                      <Text style={[styles.filePickerText, { color: theme.tint, fontSize: 13, fontWeight: '500', marginLeft: 8, flex: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+                        {selectedAssignmentFile ? selectedAssignmentFile.name : 'Pilih File Lampiran'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={[styles.formActionRow, { marginTop: 12, paddingBottom: 16, gap: 10 }]}>
+                    <TouchableOpacity 
+                      style={[styles.cancelBtn, { backgroundColor: theme.card, borderWeight: 1, borderColor: theme.border, borderWidth: 1, flex: 1, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' }]}
+                      onPress={() => {
+                        setIsAssignmentUploadVisible(false);
+                        setTimeout(() => {
+                          setIsAssignmentsVisible(true);
+                        }, 100);
+                      }}
+                    >
+                    <Text style={[styles.cancelBtnText, { color: theme.description, fontWeight: '600' }]}>Batal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.submitBtn, { backgroundColor: theme.tint, flex: 2, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center', shadowColor: theme.tint, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3 }]}
+                    onPress={handleCreateAssignment}
+                    disabled={isCreatingAssignment}
+                  >
+                    {isCreatingAssignment ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Text style={[styles.submitBtnText, { color: '#FFF', fontWeight: '700' }]}>Buat Tugas</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </KeyboardAvoidingView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Assignments Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isAssignmentsVisible}
+        onRequestClose={() => setIsAssignmentsVisible(false)}
+      >
+        <View style={styles.floatingModalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setIsAssignmentsVisible(false)}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+
+          <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
+            <View style={styles.floatingCardHeader}>
+              <View style={[styles.floatingIconContainer, { backgroundColor: '#E3F2FD' }]}>
+                <BookOpen size={24} color="#2196F3" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.floatingCardTitle, { color: theme.text, textAlign: 'left' }]}>Tugas Kuliah</Text>
+                <Text style={[styles.floatingCardSubtitle, { color: theme.description, textAlign: 'left' }]}>Daftar Tugas Aktif & Selesai</Text>
+              </View>
+            </View>
+
+            <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
+
+            <View style={styles.membersSection}>
+              <ScrollView 
+                style={styles.membersScrollView} 
+                contentContainerStyle={{ flexGrow: 1 }}
+                showsVerticalScrollIndicator={false}
+                nestedScrollEnabled={true}
+              >
+                {isLoadingAssignments ? (
+                  <ActivityIndicator size="large" color={theme.tint} style={{ marginVertical: 20 }} />
+                ) : assignmentsData.length > 0 ? (
+                  assignmentsData.map((task) => (
+                    <View key={task._id} style={styles.assignmentItem}>
+                      <View style={styles.assignmentHeader}>
+                        <Text style={[styles.assignmentTitle, { color: theme.text }]} numberOfLines={1}>
+                          {task.title}
+                        </Text>
+                        <View style={[styles.statusBadge, { backgroundColor: task.status === 'ACTIVE' ? '#E8F5E9' : '#FFEBEE' }]}>
+                          <Text style={[styles.statusText, { color: task.status === 'ACTIVE' ? '#2E7D32' : '#D32F2F' }]}>
+                            {task.status}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={[styles.assignmentDesc, { color: theme.description }]} numberOfLines={2}>
+                        {task.description}
+                      </Text>
+                      <View style={styles.assignmentFooter}>
+                        <View style={styles.dueDateContainer}>
+                          <Clock size={12} color={theme.description} />
+                          <Text style={[styles.dueDateText, { color: theme.description }]}>
+                            {new Date(task.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </Text>
+                        </View>
+                         {task.attachments?.length > 0 && (
+                          <TouchableOpacity 
+                            style={styles.attachmentLink}
+                            onPress={() => {
+                              const attachment = task.attachments[0];
+                              const isImage = attachment.name?.match(/\.(jpg|jpeg|png|gif)$/i) || attachment.type === 'image';
+                              
+                              if (isImage) {
+                                setActiveAttachment(attachment);
+                                setIsPreviewVisible(true);
+                              } else {
+                                handleDownloadAndOpenFile(attachment.url, attachment.name || 'Lampiran.pdf');
+                              }
+                            }}
+                          >
+                            <FileText size={12} color={theme.tint} />
+                            <Text style={[styles.attachmentText, { color: theme.tint }]}>Lihat Lampiran</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  ))
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Text style={{ color: theme.description }}>Belum ada tugas yang diberikan.</Text>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+
+            {isDosen && (
+              <TouchableOpacity 
+                style={[styles.createAssignmentBtn, { backgroundColor: theme.tint }]}
+                onPress={() => {
+                  setIsAssignmentUploadVisible(true);
+                  setIsAssignmentsVisible(false);
+                }}
+              >
+                <Plus size={20} color="#FFF" />
+                <Text style={styles.createBtnText}>Buat Tugas Baru</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
       </KeyboardAvoidingView>
+      </View>
     </>
   );
 }
@@ -961,5 +1933,357 @@ const styles = StyleSheet.create({
     marginLeft: 5,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: Platform.OS === 'ios' ? 100 : 60,
+    paddingRight: 15,
+  },
+  menuContent: {
+    width: 220,
+    borderRadius: 15,
+    padding: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  menuIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  menuItemText: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  menuDivider: {
+    height: 1,
+    marginVertical: 8,
+    marginHorizontal: 8,
+  },
+  floatingModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  floatingCard: {
+    width: '95%',
+    height: '70%',
+    borderRadius: 30,
+    padding: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  floatingCardHeader: {
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  floatingCardTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  floatingCardSubtitle: {
+    fontSize: 14,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  muteStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 10,
+    gap: 5,
+  },
+  muteStatusText: {
+    color: '#D32F2F',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  floatingCardDivider: {
+    height: 1,
+    width: '100%',
+    marginVertical: 15,
+  },
+  membersSection: {
+    flex: 1,
+    marginBottom: 15,
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    letterSpacing: 1,
+  },
+  membersScrollView: {
+    flex: 1,
+  },
+  floatingMemberItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  memberAvatarContainer: {
+    marginRight: 12,
+  },
+  memberAvatarSmall: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  memberInfoSmall: {
+    flex: 1,
+  },
+  memberNameSmall: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  memberNimSmall: {
+    fontSize: 12,
+  },
+  roleBadgeSmall: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  roleTextSmall: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  closeButtonLarge: {
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  closeButtonTextLarge: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  floatingIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  syllabusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
+  },
+  meetingBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  meetingText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  syllabusInfo: {
+    flex: 1,
+  },
+  syllabusTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  syllabusStatus: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  downloadButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadButtonSmall: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  assignmentItem: {
+    padding: 15,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  assignmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  assignmentTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    flex: 1,
+    marginRight: 10,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  assignmentDesc: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  assignmentFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dueDateContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  dueDateText: {
+    fontSize: 11,
+  },
+  attachmentLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  attachmentText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  createAssignmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 10,
+    gap: 8,
+  },
+  createBtnText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  uploadFormCard: {
+    width: '90%',
+    borderRadius: 20,
+    padding: 20,
+    elevation: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 15,
+  },
+  uploadFormTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  formInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 14,
+    marginBottom: 15,
+  },
+  filePickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 10,
+    marginBottom: 20,
+  },
+  filePickerText: {
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+  },
+  datePickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 10,
+    marginBottom: 5,
+  },
+  datePickerText: {
+    fontSize: 14,
+  },
+  formActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    fontWeight: '600',
+  },
+  submitBtn: {
+    flex: 2,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  submitBtnText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 15,
   },
 });

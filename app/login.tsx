@@ -147,7 +147,7 @@ export default function LoginScreen() {
               <Mail color={theme.icon} size={20} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: theme.text }]}
-                placeholder="NIM / Email Kampus"
+                placeholder="NIM/NIDN/Email"
                 placeholderTextColor={theme.description}
                 value={nim}
                 onChangeText={(text) => {

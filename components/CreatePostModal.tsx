@@ -2,26 +2,32 @@ import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import * as ImagePicker from 'expo-image-picker';
-import { Hash, Image as ImageIcon, MapPin, User2, X, Play } from 'lucide-react-native';
-import React, { useState } from 'react';
+import { Hash, Image as ImageIcon, MapPin, Play, User2, X } from 'lucide-react-native';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-    Image,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-    TouchableWithoutFeedback,
-    ActivityIndicator,
-    Alert
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  PanResponder,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
 } from 'react-native';
 
 import { updatePost } from '@/utils/post';
 import { PostData } from './PostCard';
+import SecureMedia from './SecureMedia';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface CreatePostModalProps {
   isVisible: boolean;
@@ -44,12 +50,63 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Sync content when postToEdit changes or modal opens
-  React.useEffect(() => {
+  // PanResponder for swiping down and entry animation
+  const panY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
+  useEffect(() => {
+    if (isVisible) {
+      // Very fast entry animation
+      Animated.spring(panY, {
+        toValue: 0,
+        tension: 60,
+        friction: 12,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      panY.setValue(SCREEN_HEIGHT);
+    }
+  }, [isVisible]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        return gestureState.dy > 5;
+      },
+      onPanResponderMove: (e, gestureState) => {
+        if (gestureState.dy > 0) {
+          panY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (e, gestureState) => {
+        if (gestureState.dy > 120 || gestureState.vy > 0.5) {
+          handleClose();
+        } else {
+          Animated.spring(panY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 50,
+            friction: 10,
+          }).start();
+        }
+      },
+    })
+  ).current;
+
+  const handleClose = () => {
+    Animated.timing(panY, {
+      toValue: SCREEN_HEIGHT,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      onClose();
+    });
+  };
+
+  useEffect(() => {
     if (isVisible) {
       if (postToEdit) {
         setContent(postToEdit.caption || '');
-        // We don't load media for editing currently as PATCH only handles caption
         setSelectedMedia([]);
       } else {
         setContent('');
@@ -58,32 +115,73 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
     }
   }, [isVisible, postToEdit]);
 
+  const handlePost = async () => {
+    if (!content.trim() && selectedMedia.length === 0) return;
+    setIsLoading(true);
+    try {
+      if (postToEdit) {
+        const res = await updatePost(postToEdit._id, { caption: content }, token || '');
+        if (res.success) {
+          Alert.alert('Berhasil', 'Postingan kamu sudah diperbarui!');
+          handleClose();
+          if (onSuccess) onSuccess();
+          triggerRefresh();
+        } else {
+          Alert.alert('Gagal', res.message || 'Gagal memperbarui postingan.');
+        }
+      } else {
+        const formData = new FormData();
+        formData.append('caption', content);
+        for (const item of selectedMedia) {
+          const filename = item.uri.split('/').pop() || `upload-${Date.now()}.jpg`;
+          const ext = filename.split('.').pop()?.toLowerCase();
+          let type = item.type === 'video' ? 'video/mp4' : 'image/jpeg';
+          if (ext === 'png') type = 'image/png';
+          else if (ext === 'mov') type = 'video/mp4';
+          // @ts-ignore
+          formData.append('files', { uri: item.uri, name: filename, type });
+        }
+
+        const response = await fetch('https://besosmed-production.up.railway.app/api/v1/posts', {
+          method: 'POST',
+          headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: formData,
+        });
+
+        if (response.ok) {
+          Alert.alert('Berhasil', 'Postingan kamu sudah terbit! 🚀');
+          triggerRefresh();
+          handleClose();
+          setContent('');
+          setSelectedMedia([]);
+          if (onSuccess) onSuccess();
+        } else {
+          const result = await response.json();
+          Alert.alert('Gagal', result.message || 'Gagal memposting. Coba lagi nanti.');
+        }
+      }
+    } catch (error) {
+      Alert.alert('Kesalahan', 'Terjadi kesalahan koneksi.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const userData = {
     name: user?.nama || 'Pengguna Metamedia',
-    avatar: `https://avatar.iran.liara.run/public/boy?username=${user?.nama || 'user'}`,
-    prodi: user?.program_studi || 'Mahasiswa'
+    avatar: user?.avatar_url || `https://avatar.iran.liara.run/public/boy?username=${user?.nama || 'user'}`,
   };
 
   const pickMedia = async () => {
-    if (postToEdit) {
-      Alert.alert('Info', 'Maaf, untuk saat ini media tidak dapat diubah saat mengedit postingan.');
-      return;
-    }
-    // ... rest of pickMedia ...
+    if (postToEdit) return;
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    
-    if (status !== 'granted') {
-      Alert.alert('Izin Ditolak', 'Maaf, kami butuh izin galeri untuk mengunggah foto/video.');
-      return;
-    }
-
+    if (status !== 'granted') return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images', 'videos'],
       allowsMultipleSelection: true,
       quality: 0.8,
       selectionLimit: 5,
     });
-
     if (!result.canceled) {
       const newMedia: SelectedMedia[] = result.assets.map(asset => ({
         uri: asset.uri,
@@ -97,212 +195,151 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
     setSelectedMedia(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handlePost = async () => {
-    if (!content.trim() && selectedMedia.length === 0) return;
-
-    setIsLoading(true);
-
-    try {
-      if (postToEdit) {
-        // EDIT MODE: PATCH request
-        const res = await updatePost(postToEdit._id, { caption: content }, token || '');
-        if (res.success) {
-          Alert.alert('Berhasil', 'Postingan kamu sudah diperbarui!');
-          onClose();
-          if (onSuccess) onSuccess();
-          triggerRefresh();
-        } else {
-          Alert.alert('Gagal', res.message || 'Gagal memperbarui postingan.');
-        }
-      } else {
-        // CREATE MODE: FormData / POST request
-        const formData = new FormData();
-        formData.append('caption', content);
-        
-        for (const item of selectedMedia) {
-          const filename = item.uri.split('/').pop() || `upload-${Date.now()}.jpg`;
-          const ext = filename.split('.').pop()?.toLowerCase();
-          
-          let type = item.type === 'video' ? 'video/mp4' : 'image/jpeg';
-          if (ext === 'png') type = 'image/png';
-          else if (ext === 'mov') type = 'video/mp4';
-
-          if (Platform.OS === 'web') {
-            const blobResponse = await fetch(item.uri);
-            const blob = await blobResponse.blob();
-            formData.append('files', blob, filename);
-          } else {
-            // @ts-ignore
-            formData.append('files', {
-              uri: item.uri,
-              name: filename,
-              type: type,
-            });
-          }
-        }
-
-        const response = await fetch('https://besosmed-production.up.railway.app/api/v1/posts', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: formData,
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-          Alert.alert('Berhasil', 'Postingan kamu sudah terbit! 🚀');
-          triggerRefresh();
-          onClose();
-          setContent('');
-          setSelectedMedia([]);
-          if (onSuccess) onSuccess();
-        } else {
-          Alert.alert('Gagal', result.message || 'Gagal memposting. Coba lagi nanti.');
-        }
-      }
-    } catch (error) {
-      console.error('Post error:', error);
-      Alert.alert('Kesalahan', 'Terjadi kesalahan koneksi.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
     <Modal
-      animationType="slide"
+      animationType="fade"
       transparent={true}
       visible={isVisible}
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
+      statusBarTranslucent={true}
     >
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <TouchableWithoutFeedback>
-            <View style={[styles.modalContainer, { backgroundColor: theme.card }]}>
-              <View style={styles.dragHandleContainer}>
-                <View style={[styles.dragHandle, { backgroundColor: theme.border }]} />
-              </View>
+      <View style={styles.overlay}>
+        <TouchableWithoutFeedback onPress={handleClose}>
+          <View style={styles.clickableOverlay} />
+        </TouchableWithoutFeedback>
+        
+        <Animated.View 
+          style={[
+            styles.modalContainer, 
+            { 
+              backgroundColor: theme.card,
+              transform: [{ translateY: panY }] 
+            }
+          ]}
+        >
+          <View {...panResponder.panHandlers}>
+            <View style={styles.dragHandleContainer}>
+              <View style={[styles.dragHandle, { backgroundColor: theme.border }]} />
+            </View>
 
-              {/* Header */}
-              <View style={[styles.header, { borderBottomColor: theme.border }]}>
-                <TouchableOpacity onPress={onClose} style={styles.closeButton} disabled={isLoading}>
-                  <X size={26} color={theme.text} strokeWidth={2.5} />
-                </TouchableOpacity>
-                <Text style={[styles.headerTitle, { color: theme.text }]}>
-                  {postToEdit ? 'Edit Postingan' : 'Buat Postingan'}
-                </Text>
-                <TouchableOpacity 
-                   style={[
-                    styles.postButton, 
-                    { backgroundColor: (content.length > 0 || selectedMedia.length > 0) && !isLoading ? theme.tint : theme.border }
-                  ]}
-                  disabled={(content.length === 0 && selectedMedia.length === 0) || isLoading}
-                  onPress={handlePost}
-                >
-                  {isLoading ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Text style={[styles.postButtonText, { color: (content.length > 0 || selectedMedia.length > 0) ? '#FFF' : theme.description }]}>
-                      {postToEdit ? 'Simpan' : 'Posting'}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              <KeyboardAvoidingView 
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={{ flex: 1 }}
+            <View style={[styles.header, { borderBottomColor: theme.border }]}>
+              <View style={{ width: 40 }} /> 
+              <Text style={[styles.headerTitle, { color: theme.text }]}>
+                {postToEdit ? 'Edit Postingan' : 'Buat Postingan'}
+              </Text>
+              <TouchableOpacity 
+                 style={[
+                  styles.postButton, 
+                  { backgroundColor: (content.length > 0 || selectedMedia.length > 0) && !isLoading ? theme.tint : theme.border }
+                ]}
+                disabled={(content.length === 0 && selectedMedia.length === 0) || isLoading}
+                onPress={handlePost}
               >
-                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                  {/* User Section */}
-                  <View style={styles.userRow}>
+                {isLoading ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={[styles.postButtonText, { color: (content.length > 0 || selectedMedia.length > 0) ? '#FFF' : theme.description }]}>
+                    {postToEdit ? 'Simpan' : 'Posting'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ flex: 1 }}
+          >
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.userRow}>
+                {userData.avatar ? (
+                  userData.avatar.startsWith('http') ? (
                     <Image source={{ uri: userData.avatar }} style={styles.avatar} />
-                    <View>
-                      <Text style={[styles.userName, { color: theme.text }]}>{userData.name}</Text>
-                      <View style={[styles.privacyBadge, { backgroundColor: theme.background }]}>
-                        <User2 size={12} color={theme.description} />
-                        <Text style={[styles.privacyText, { color: theme.description }]}>Publik</Text>
-                      </View>
-                    </View>
+                  ) : (
+                    <SecureMedia url={userData.avatar} token={token} style={styles.avatar} />
+                  )
+                ) : (
+                  <View style={[styles.avatar, { backgroundColor: theme.border, justifyContent: 'center', alignItems: 'center' }]}>
+                    <User2 size={24} color={theme.description} />
                   </View>
-
-                  {/* Input Section */}
-                  <TextInput
-                    style={[styles.input, { color: theme.text, minHeight: selectedMedia.length > 0 ? 100 : 250 }]}
-                    placeholder="Apa yang Anda pikirkan hari ini?"
-                    placeholderTextColor={theme.description}
-                    multiline
-                    autoFocus={selectedMedia.length === 0}
-                    value={content}
-                    onChangeText={setContent}
-                    textAlignVertical="top"
-                    editable={!isLoading}
-                  />
-
-                  {/* Multi-Media Preview Scroll */}
-                  {selectedMedia.length > 0 && (
-                    <ScrollView 
-                      horizontal 
-                      showsHorizontalScrollIndicator={false} 
-                      style={styles.mediaPreviewList}
-                      contentContainerStyle={{ gap: 12, paddingRight: 20 }}
-                    >
-                      {selectedMedia.map((item, index) => (
-                        <View key={index} style={styles.mediaItemContainer}>
-                          <Image source={{ uri: item.uri }} style={styles.mediaPreview} />
-                          {item.type === 'video' && (
-                            <View style={styles.videoIndicator}>
-                              <Play size={16} color="#FFF" fill="#FFF" />
-                            </View>
-                          )}
-                          <TouchableOpacity 
-                            style={styles.removeMediaButton} 
-                            onPress={() => removeMedia(index)}
-                            disabled={isLoading}
-                          >
-                            <View style={styles.removeIconBg}>
-                              <X size={14} color="#FFF" />
-                            </View>
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                      <TouchableOpacity style={styles.addMoreButton} onPress={pickMedia} disabled={isLoading}>
-                        <View style={[styles.addMoreInner, { borderColor: theme.border }]}>
-                          <ImageIcon size={24} color={theme.description} />
-                          <Text style={{ color: theme.description, fontSize: 10, marginTop: 4 }}>Tambah</Text>
-                        </View>
-                      </TouchableOpacity>
-                    </ScrollView>
-                  )}
-                </ScrollView>
-
-                {/* Toolbar */}
-                <View style={[styles.toolbar, { borderTopColor: theme.border, backgroundColor: theme.card }]}>
-                  <Text style={[styles.helperText, { color: theme.description }]}>Tambahkan ke postingan Anda</Text>
-                  <View style={styles.actionRow}>
-                    <TouchableOpacity style={styles.actionItem} onPress={pickMedia} disabled={isLoading}>
-                      <ImageIcon size={24} color="#4CAF50" />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionItem} disabled={isLoading}>
-                      <MapPin size={24} color="#F44336" />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionItem} disabled={isLoading}>
-                      <Hash size={24} color="#2196F3" />
-                    </TouchableOpacity>
-                    <View style={{ flex: 1 }} />
-                    <Text style={[styles.charCount, { color: content.length > 250 ? '#F44336' : theme.description }]}>
-                      {content.length}/280
-                    </Text>
+                )}
+                <View>
+                  <Text style={[styles.userName, { color: theme.text }]}>{userData.name}</Text>
+                  <View style={[styles.privacyBadge, { backgroundColor: theme.background }]}>
+                    <User2 size={12} color={theme.description} />
+                    <Text style={[styles.privacyText, { color: theme.description }]}>Publik</Text>
                   </View>
                 </View>
-              </KeyboardAvoidingView>
+              </View>
+
+              <TextInput
+                style={[styles.input, { color: theme.text, minHeight: selectedMedia.length > 0 ? 100 : 250 }]}
+                placeholder="Apa yang Anda pikirkan hari ini?"
+                placeholderTextColor={theme.description}
+                multiline
+                value={content}
+                onChangeText={setContent}
+                textAlignVertical="top"
+                editable={!isLoading}
+              />
+
+              {selectedMedia.length > 0 && (
+                <ScrollView 
+                  horizontal 
+                  showsHorizontalScrollIndicator={false} 
+                  style={styles.mediaPreviewList}
+                  contentContainerStyle={{ gap: 12, paddingRight: 20 }}
+                >
+                  {selectedMedia.map((item, index) => (
+                    <View key={index} style={styles.mediaItemContainer}>
+                      <Image source={{ uri: item.uri }} style={styles.mediaPreview} />
+                      {item.type === 'video' && (
+                        <View style={styles.videoIndicator}>
+                          <Play size={16} color="#FFF" fill="#FFF" />
+                        </View>
+                      )}
+                      <TouchableOpacity 
+                        style={styles.removeMediaButton} 
+                        onPress={() => removeMedia(index)}
+                        disabled={isLoading}
+                      >
+                        <View style={styles.removeIconBg}>
+                          <X size={14} color="#FFF" />
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  <TouchableOpacity style={styles.addMoreButton} onPress={pickMedia} disabled={isLoading}>
+                    <View style={[styles.addMoreInner, { borderColor: theme.border }]}>
+                      <ImageIcon size={24} color={theme.description} />
+                      <Text style={{ color: theme.description, fontSize: 10, marginTop: 4 }}>Tambah</Text>
+                    </View>
+                  </TouchableOpacity>
+                </ScrollView>
+              )}
+            </ScrollView>
+
+            <View style={[styles.toolbar, { borderTopColor: theme.border, backgroundColor: theme.card }]}>
+              <Text style={[styles.helperText, { color: theme.description }]}>Tambahkan ke postingan Anda</Text>
+              <View style={styles.actionRow}>
+                <TouchableOpacity style={styles.actionItem} onPress={pickMedia} disabled={isLoading}>
+                  <ImageIcon size={24} color="#4CAF50" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionItem} disabled={isLoading}>
+                  <MapPin size={24} color="#F44336" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionItem} disabled={isLoading}>
+                  <Hash size={24} color="#2196F3" />
+                </TouchableOpacity>
+                <View style={{ flex: 1 }} />
+                <Text style={[styles.charCount, { color: content.length > 250 ? '#F44336' : theme.description }]}>
+                  {content.length}/280
+                </Text>
+              </View>
             </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
+          </KeyboardAvoidingView>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -313,8 +350,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
     justifyContent: 'flex-end',
   },
+  clickableOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   modalContainer: {
-    height: '90%',
+    height: '70%',
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     overflow: 'hidden',
@@ -337,12 +381,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
   },
-  closeButton: {
-    padding: 5,
-  },
   headerTitle: {
     fontSize: 18,
     fontWeight: 'bold',
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    zIndex: -1,
   },
   postButton: {
     paddingHorizontal: 16,
