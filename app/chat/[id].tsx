@@ -31,7 +31,7 @@ import SecureMedia from '@/components/SecureMedia';
 import { format } from 'date-fns';
 
 export default function ChatRoomScreen() {
-  const { id, recipientId, recipientName } = useLocalSearchParams();
+  const { id, recipientId, recipientName, recipientAvatar } = useLocalSearchParams<{ id: string, recipientId: string, recipientName: string, recipientAvatar?: string }>();
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
@@ -147,8 +147,12 @@ export default function ChatRoomScreen() {
     };
 
     const handleTypingStatus = (data: any) => {
-      const { conversationId, isTyping: userIsTyping, userId } = data;
-      if (conversationId === id && userId !== user?._id) {
+      const { conversationId, conversation_id, isTyping, is_typing, userId, user_id, sender_id } = data;
+      const targetId = conversationId || conversation_id;
+      const userIsTyping = isTyping !== undefined ? isTyping : is_typing;
+      const typingUserId = userId || user_id || sender_id;
+
+      if (targetId === id && typingUserId !== user?._id) {
         setRemoteTyping(userIsTyping);
         if (userIsTyping) {
           if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
@@ -425,9 +429,13 @@ export default function ChatRoomScreen() {
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
               <ArrowLeft size={24} color={theme.text} />
             </TouchableOpacity>
-            <View style={styles.headerAvatarPlaceholder}>
-              <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{recipientName ? recipientName.charAt(0).toUpperCase() : 'C'}</Text>
-            </View>
+            {recipientAvatar && recipientAvatar !== 'undefined' ? (
+              <Image source={{ uri: recipientAvatar as string }} style={styles.headerAvatar} />
+            ) : (
+              <View style={styles.headerAvatarPlaceholder}>
+                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{recipientName ? recipientName.charAt(0).toUpperCase() : 'C'}</Text>
+              </View>
+            )}
             <View style={styles.headerInfo}>
               <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>{recipientName || 'Chat'}</Text>
               <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
@@ -562,6 +570,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#A0AEC0',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 10,
+  },
+  headerAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     marginRight: 10,
   },
   headerActionButton: {

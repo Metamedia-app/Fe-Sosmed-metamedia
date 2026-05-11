@@ -1,15 +1,17 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { MessageSquareText, Radio, Search, Users, Check, CheckCheck, Clock } from 'lucide-react-native';
+import { MessageSquareText, Radio, Search, Users, Check, CheckCheck, Clock, SquarePlus } from 'lucide-react-native';
 import React, { useState, useCallback, useEffect } from 'react';
-import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
+import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Alert } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
-import { getConversations } from '@/utils/chat';
+import { getConversations, deleteConversation } from '@/utils/chat';
 import { getMyGroups } from '@/utils/chatMatkul';
+import { communityService } from '@/utils/chatCommunity';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { format } from 'date-fns';
 import SecureMedia from '@/components/SecureMedia';
+import CreateCommunityModal from '@/components/CreateCommunityModal';
 
 const INBOX_DATA = [
   {
@@ -89,7 +91,9 @@ export default function ChatScreen() {
   const [activeCategory, setActiveCategory] = useState('inbox');
   const [conversations, setConversations] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
+  const [communities, setCommunities] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isCreateCommunityVisible, setIsCreateCommunityVisible] = useState(false);
   const { token, user } = useAuth();
   const { lastEvent, unreadChatSummary, refreshUnreadChat, socket } = useSocket();
   const router = useRouter();
@@ -140,6 +144,16 @@ export default function ChatScreen() {
         console.log('[Debug Grup Terbaru] Data Pertama:', JSON.stringify(sortedData[0], null, 2));
       }
       setGroups(sortedData);
+    }
+    if (!silent) setIsLoading(false);
+  }, [token]);
+
+  const fetchCommunities = useCallback(async (silent = false) => {
+    if (!token) return;
+    if (!silent) setIsLoading(true);
+    const result = await communityService.getMyCommunities(token);
+    if (result.success) {
+      setCommunities(result.data || []);
     }
     if (!silent) setIsLoading(false);
   }, [token]);
@@ -237,15 +251,17 @@ export default function ChatScreen() {
         fetchChats();
       } else if (activeCategory === 'grup') {
         fetchGroups();
+      } else if (activeCategory === 'community') {
+        fetchCommunities();
       }
-    }, [activeCategory, fetchChats, fetchGroups, refreshUnreadChat])
+    }, [activeCategory, fetchChats, fetchGroups, fetchCommunities, refreshUnreadChat])
   );
 
   const getActiveData = () => {
     switch (activeCategory) {
       case 'inbox': return conversations;
       case 'grup': return groups;
-      case 'community': return COMMUNITY_DATA;
+      case 'community': return communities;
       default: return conversations;
     }
   };
@@ -300,7 +316,17 @@ export default function ChatScreen() {
       <View style={[styles.tabsContainer]}>
         {renderCategoryTab('inbox', 'Inbox', MessageSquareText, unreadChatSummary?.categories?.inbox)}
         {renderCategoryTab('grup', 'Grup', Users, unreadChatSummary?.categories?.group)}
-        {renderCategoryTab('community', 'Community', Radio, unreadChatSummary?.categories?.community)}
+        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+          {renderCategoryTab('community', 'Community', Radio, unreadChatSummary?.categories?.community)}
+          {activeCategory === 'community' && (
+            <TouchableOpacity 
+              style={[styles.createCommunityBtn, { backgroundColor: theme.tint + '20' }]}
+              onPress={() => setIsCreateCommunityVisible(true)}
+            >
+              <SquarePlus size={18} color={theme.tint} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {isLoading && (activeCategory === 'inbox' || activeCategory === 'grup') ? (
@@ -320,14 +346,20 @@ export default function ChatScreen() {
           renderItem={({ item }) => {
             const isInbox = activeCategory === 'inbox';
             const isGroup = activeCategory === 'grup';
+            const isCommunity = activeCategory === 'community';
             
             const targetUser = isInbox ? item.user : null;
-            const name = isInbox ? targetUser?.nama : isGroup ? item.name : item.name;
-            const avatar = isInbox ? targetUser?.avatar_url : item.avatar_url || item.avatar;
+            const name = isInbox ? targetUser?.nama : (isGroup || isCommunity) ? item.name : item.name;
+            const avatar = isInbox ? targetUser?.avatar_url : (isGroup || isCommunity) ? item.avatar_url : item.avatar;
             
-            // For groups, API might not send last_message string directly
-            const defaultLastMessage = isGroup ? (item.subject_info ? `Kode: ${item.subject_info.code}` : 'Ketuk untuk membuka grup') : 'Mengirim lampiran';
-            const lastMessage = item.last_message || item.lastMessage || defaultLastMessage;
+            // For groups/communities, API might not send last_message string directly or send an ID
+            const defaultLastMessage = isGroup ? (item.subject_info ? `Kode: ${item.subject_info.code}` : 'Ketuk untuk membuka grup') 
+                                     : isCommunity ? (item.description || 'Ketuk untuk membuka komunitas')
+                                     : 'Mengirim lampiran';
+            
+            // If last_message is a string (ID), show default; if it's an object with body, show body.
+            const lastMessage = item.last_message?.body || 
+                               (typeof item.last_message === 'string' ? item.last_message : defaultLastMessage);
             
             let timeStr = item.time || '';
             const timestamp = isGroup ? item.last_message_at || item.createdAt : item.last_message_at;
@@ -348,11 +380,36 @@ export default function ChatScreen() {
               <TouchableOpacity 
                 activeOpacity={0.7}
                 style={[styles.chatItem, { backgroundColor: theme.background }]}
+                onLongPress={() => {
+                  if (isInbox) {
+                    Alert.alert(
+                      "Hapus Obrolan",
+                      `Apakah Anda yakin ingin menghapus obrolan dengan ${name}?`,
+                      [
+                        { text: "Batal", style: "cancel" },
+                        { 
+                          text: "Hapus", 
+                          style: "destructive",
+                          onPress: async () => {
+                            const res = await deleteConversation(item._id, token);
+                            if (res.success) {
+                              setConversations(prev => prev.filter(c => c._id !== item._id));
+                            } else {
+                              Alert.alert('Gagal', res.message || 'Gagal menghapus obrolan');
+                            }
+                          }
+                        }
+                      ]
+                    );
+                  }
+                }}
                 onPress={() => {
                   if (isInbox) {
-                    router.push(`/chat/${item._id}?recipientId=${targetUser?._id}&recipientName=${encodeURIComponent(name)}`);
+                    router.push(`/chat/${item._id}?recipientId=${targetUser?._id}&recipientName=${encodeURIComponent(name)}&recipientAvatar=${encodeURIComponent(avatar || '')}`);
                   } else if (isGroup) {
                     router.push(`/chat-matkul/${item._id}?groupName=${encodeURIComponent(name)}`);
+                  } else if (activeCategory === 'community') {
+                    router.push(`/chat-community/${item._id}?communityName=${encodeURIComponent(name)}`);
                   }
                 }}
               >
@@ -408,6 +465,12 @@ export default function ChatScreen() {
           }}
         />
       )}
+
+      <CreateCommunityModal 
+        isVisible={isCreateCommunityVisible}
+        onClose={() => setIsCreateCommunityVisible(false)}
+        onSuccess={() => fetchCommunities()}
+      />
     </View>
   );
 }
@@ -511,5 +574,13 @@ const styles = StyleSheet.create({
   tabBadgeText: {
     fontSize: 10,
     fontWeight: 'bold',
+  },
+  createCommunityBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 'auto',
   },
 });

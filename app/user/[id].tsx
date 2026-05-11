@@ -8,11 +8,12 @@ import { BASE_URL } from '@/utils/api';
 import { followUser, getFollowers, getFollowing, getOtherUserProfile, unfollowUser } from '@/utils/follow';
 import { getAvatarUrl } from '@/utils/avatar';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Calendar, ChevronLeft, GraduationCap, Grid, Menu, Repeat } from 'lucide-react-native';
+import { Calendar, ChevronLeft, GraduationCap, Grid, Menu, MessageSquare, Repeat } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
 import { subscribeToCommentSync } from '@/utils/commentSyncStore';
+import { getOrCreateConversation } from '@/utils/chat';
 
 export default function UserProfileScreen() {
   const { id, initialName, initialNim, initialAvatar } = useLocalSearchParams<{ 
@@ -47,6 +48,7 @@ export default function UserProfileScreen() {
   const [selectedPost, setSelectedPost] = useState<PostData | null>(null);
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [isFetchingDetail, setIsFetchingDetail] = useState(false);
+  const [isDMLoading, setIsDMLoading] = useState(false);
 
   // Anti-duplicate & Anti-stale event tracker
   const lastProcessedEventTime = React.useRef<number>(0);
@@ -314,6 +316,35 @@ export default function UserProfileScreen() {
     }
   };
 
+  const handleDM = async () => {
+    if (!id || !token || isDMLoading) return;
+    
+    console.log(`=========================================`);
+    console.log(`[DEBUG DM] Membuka chat ke User:`);
+    console.log(`[DEBUG DM] ID: ${id}`);
+    console.log(`[DEBUG DM] Nama: ${studentData?.name || 'Loading...'}`);
+    console.log(`=========================================`);
+
+    setIsDMLoading(true);
+    const res = await getOrCreateConversation(id, token);
+    setIsDMLoading(false);
+    
+    if (res.success && res.data?.conversation_id) {
+      console.log(`[DEBUG DM] Berhasil! Redirect ke Room ID: ${res.data.conversation_id}`);
+      router.push({
+        pathname: `/chat/[id]`,
+        params: {
+          id: res.data.conversation_id,
+          recipientId: id,
+          recipientName: studentData?.name || 'User',
+          recipientAvatar: studentData?.avatar || ''
+        }
+      } as any);
+    } else {
+      Alert.alert('Gagal', res.message || 'Gagal memulai percakapan');
+    }
+  };
+
   if (isLoadingInitially && !targetUser) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
@@ -375,25 +406,42 @@ export default function UserProfileScreen() {
               <Text style={[styles.tiktokUsernameText, { color: theme.description }]}>@{studentData.nim}</Text>
             </View>
             
-            <TouchableOpacity 
-              style={[
-                styles.followButton, 
-                { backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
-              ]}
-              onPress={handleFollowToggle}
-              disabled={isFollowLoading}
-            >
-              {isFollowLoading ? (
-                <ActivityIndicator size="small" color={isFollowing ? theme.text : "#FFF"} />
-              ) : (
-                <Text style={[
-                  styles.followButtonText, 
-                  { color: isFollowing ? theme.text : "#FFF" }
-                ]}>
-                  {isFollowing ? 'Mengikuti' : 'Ikuti'}
-                </Text>
-              )}
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              <TouchableOpacity 
+                style={[
+                  styles.followButton, 
+                  { backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
+                ]}
+                onPress={handleFollowToggle}
+                disabled={isFollowLoading}
+              >
+                {isFollowLoading ? (
+                  <ActivityIndicator size="small" color={isFollowing ? theme.text : "#FFF"} />
+                ) : (
+                  <Text style={[
+                    styles.followButtonText, 
+                    { color: isFollowing ? theme.text : "#FFF" }
+                  ]}>
+                    {isFollowing ? 'Mengikuti' : 'Ikuti'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[
+                  styles.dmButton, 
+                  { backgroundColor: theme.border + '30' }
+                ]}
+                onPress={handleDM}
+                disabled={isDMLoading}
+              >
+                {isDMLoading ? (
+                  <ActivityIndicator size="small" color={theme.tint} />
+                ) : (
+                  <MessageSquare size={20} color={theme.text} />
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
 
         {/* Stats Row */}
@@ -664,6 +712,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   followButtonText: { fontSize: 14, fontWeight: 'bold' },
+  dmButton: {
+    width: 44,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   statsRow: {
     flexDirection: 'row',
     paddingHorizontal: 20,

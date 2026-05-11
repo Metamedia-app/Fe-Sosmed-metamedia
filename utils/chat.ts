@@ -207,3 +207,42 @@ export const clearConversation = async (conversationId: string, token: string) =
     return { success: false, message: 'Gagal membersihkan obrolan' };
   }
 };
+export const getOrCreateConversation = async (targetUserId: string, token: string) => {
+  try {
+    console.log(`[API Chat] Get or create conversation with user: ${targetUserId}`);
+    const response = await fetch(`${BASE_URL}/chat/conversations/with-user/${targetUserId}`, {
+      method: 'GET',
+      headers: {
+        'Accept': '*/*',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    const result = await response.json();
+    return {
+      success: response.ok && result.success,
+      data: result.data,
+      message: result.message
+    };
+  } catch (error) {
+    console.error('Error in getOrCreateConversation:', error);
+    return { success: false, message: 'Gagal memulai percakapan' };
+  }
+};
+
+export const deleteConversation = async (conversationId: string, token: string) => {
+  try {
+    console.log(`[API Chat] Deleting conversation ${conversationId}`);
+    const response = await fetch(`${BASE_URL}/chat/conversations/${conversationId}`, {
+      method: 'DELETE',
+      headers: {
+        'Accept': '*/*',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    const result = await response.json();
+    return { success: response.ok && result.success, message: result.message };
+  } catch (error) {
+    console.error('Error deleting conversation:', error);
+    return { success: false, message: 'Gagal menghapus obrolan' };
+  }
+};

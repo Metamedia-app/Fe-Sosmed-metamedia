@@ -5,6 +5,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { Mail, Lock, LogIn } from 'lucide-react-native';
+import { registerForPushNotificationsAsync, pushNotificationService } from '@/utils/pushNotification';
 
 export default function LoginScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -33,7 +34,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!nim || !password) {
-      setErrorMessage('Harap isi NIM dan kata sandi');
+      setErrorMessage('Harap isi NIM NIDN dan kata sandi');
       return;
     }
 
@@ -67,11 +68,23 @@ export default function LoginScreen() {
         if (userData._id && !userData.id) userData.id = userData._id;
         if (userData.id && !userData._id) userData._id = userData.id;
 
-        login(token || 'dummy-token', userData);
+        // --- PUSH NOTIFICATION INTEGRATION ---
+        let fcmToken = undefined;
+        try {
+          fcmToken = await registerForPushNotificationsAsync();
+          if (fcmToken && token) {
+            await pushNotificationService.saveToken(token, fcmToken);
+          }
+        } catch (pushError) {
+          console.error('Failed to setup push notifications:', pushError);
+        }
+        // -------------------------------------
+
+        login(token || 'dummy-token', userData, fcmToken);
         router.replace('/(tabs)');
       } else {
         if (response.status === 401) {
-          setErrorMessage(result.message || 'NIM atau password salah.');
+          setErrorMessage(result.message || 'NIM NIDN atau password salah.');
         } else if (response.status === 500 || result.retryAfter) {
           if (result.retryAfter) {
             setCountdown(result.retryAfter);

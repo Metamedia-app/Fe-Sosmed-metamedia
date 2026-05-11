@@ -28,7 +28,7 @@ type AuthContextType = {
   token: string | null;
   user: User | null;
   refreshSignal: number;
-  login: (token: string, user: User) => void;
+  login: (token: string, user: User, fcmToken?: string) => void;
   logout: () => void;
   triggerRefresh: () => void;
   refreshProfile: () => Promise<void>;
@@ -47,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [fcmToken, setFcmToken] = useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
   const [isProcessingGoogle, setIsProcessingGoogle] = useState(false);
@@ -80,15 +81,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = (newToken: string, userData: User) => {
+  const login = (newToken: string, userData: User, newFcmToken?: string) => {
     setToken(newToken);
     setUser(userData);
+    if (newFcmToken) setFcmToken(newFcmToken);
     setIsLoggedIn(true);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    // If we have an FCM token and auth token, try to delete it from server
+    if (token && fcmToken) {
+      try {
+        const { pushNotificationService } = require('@/utils/pushNotification');
+        await pushNotificationService.deleteToken(token, fcmToken);
+      } catch (e) {
+        console.error('Failed to delete FCM token on logout:', e);
+      }
+    }
+    
     setToken(null);
     setUser(null);
+    setFcmToken(null);
     setIsLoggedIn(false);
   };
 
@@ -357,7 +370,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await response.json();
       if (response.ok) {
         const { token: newToken, user: userData } = result.data || result;
-        login(newToken, userData);
+        
+        // --- PUSH NOTIFICATION INTEGRATION ---
+        let fcmTokenResult = undefined;
+        try {
+          const { registerForPushNotificationsAsync, pushNotificationService } = require('@/utils/pushNotification');
+          fcmTokenResult = await registerForPushNotificationsAsync();
+          if (fcmTokenResult && newToken) {
+            await pushNotificationService.saveToken(newToken, fcmTokenResult);
+          }
+        } catch (pushError) {
+          console.error('Failed to setup push notifications (Google):', pushError);
+        }
+        // -------------------------------------
+
+        login(newToken, userData, fcmTokenResult);
         return { success: true };
       } else {
         return { success: false, message: result.message || 'Gagal login via Google' };

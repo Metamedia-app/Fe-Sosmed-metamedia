@@ -9,6 +9,7 @@ import React, { useEffect } from 'react';
 import { AuthProvider } from '@/context/AuthContext';
 import { SocketProvider } from '@/context/SocketContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { pushNotificationService } from '@/utils/pushNotification';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -18,6 +19,18 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
   
   useEffect(() => {
+    // Setup Push Notification Listeners
+    const unsubscribe = pushNotificationService.addNotificationListeners(
+      (notification) => {
+        // Handle foreground notification
+        console.log('Foreground notification:', notification.request.content.title);
+      },
+      (response) => {
+        // Handle notification click
+        console.log('Notification clicked:', response.notification.request.content.data);
+      }
+    );
+
     if (Platform.OS === 'android') {
       // Hide navigation bar and status bar for immersive experience
       const hideSystemBars = async () => {
@@ -31,6 +44,8 @@ export default function RootLayout() {
       
       hideSystemBars();
     }
+
+    return () => unsubscribe();
   }, []);
 
   return (

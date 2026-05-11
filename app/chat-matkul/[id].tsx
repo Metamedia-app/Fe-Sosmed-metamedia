@@ -41,7 +41,7 @@ export default function GroupChatRoomScreen() {
   const [isSending, setIsSending] = useState(false);
   const [selectedImage, setSelectedImage] = useState<any>(null);
   const [isTyping, setIsTyping] = useState(false);
-  const [remoteTyping, setRemoteTyping] = useState('');
+  const [typingUsers, setTypingUsers] = useState<{[key: string]: string}>({});
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isSyllabusVisible, setIsSyllabusVisible] = useState(false);
@@ -80,20 +80,31 @@ export default function GroupChatRoomScreen() {
   // Calculate if user is dosen based on group member data or global profile role
   const isDosen = useMemo(() => {
     const myId = user?._id || user?.id;
-    const myMemberData = groupDetail?.members?.find((m: any) => m._id === myId || m.id === myId);
-    const roleFromGroup = myMemberData?.role?.toLowerCase() === 'dosen';
     
-    console.log('[DEBUG MUTE] My ID:', myId);
-    console.log('[DEBUG MUTE] Role from Profile:', user?.role);
-    console.log('[DEBUG MUTE] Found My Member Data:', JSON.stringify(myMemberData));
+    // Check if I am in the admins list
+    const isAdmin = groupDetail?.admins?.some((admin: any) => 
+      (typeof admin === 'string' ? admin === myId : admin._id === myId)
+    );
     
-    return (user?.role?.toLowerCase() === 'dosen') || roleFromGroup;
+    // Fallback to global profile role just in case
+    const isGlobalDosen = user?.role?.toLowerCase() === 'dosen' || user?.role?.toLowerCase() === 'admin';
+    
+    return isAdmin || isGlobalDosen;
   }, [groupDetail, user]);
   
   const flatListRef = useRef<FlatList>(null);
   const inputAreaRef = useRef<View>(null);
   const typingTimeoutRef = useRef<any>(null);
+  const remoteTypingTimeouts = useRef<{[key: string]: any}>({});
   const remoteTypingTimeoutRef = useRef<any>(null);
+
+  const typingStatusText = useMemo(() => {
+    const users = Object.values(typingUsers);
+    if (users.length === 0) return '';
+    if (users.length === 1) return `${users[0]} sedang mengetik...`;
+    if (users.length === 2) return `${users[0]} dan ${users[1]} sedang mengetik...`;
+    return `${users[0]}, ${users[1]} dan ${users.length - 2} lainnya sedang mengetik...`;
+  }, [typingUsers]);
 
   // Fetch messages
   const fetchChatMessages = useCallback(async () => {
@@ -191,18 +202,46 @@ export default function GroupChatRoomScreen() {
     };
 
     const handleGroupTyping = (data: any) => {
-      const { groupId, conversationId, isTyping: userIsTyping, userId, user: typingUser } = data;
-      const targetId = groupId || conversationId;
-      if (targetId === id && userId !== user?._id) {
-        // If backend provides user object with name
-        const displayName = typingUser?.nama || 'Seseorang';
-        setRemoteTyping(userIsTyping ? `${displayName} sedang mengetik...` : '');
+      const { groupId, conversationId, conversation_id, isTyping, is_typing, userId, user_id, sender_id, user: typingUser } = data;
+      const targetId = groupId || conversationId || conversation_id;
+      const userIsTyping = isTyping !== undefined ? isTyping : is_typing;
+      const typingUserId = userId || user_id || sender_id;
+
+      if (targetId === id && typingUserId !== user?._id) {
+        let displayName = typingUser?.nama || typingUser?.name;
+        
+        // Lookup name in members list if not provided in socket payload
+        if (!displayName && groupDetail?.members) {
+          const member = groupDetail.members.find((m: any) => m._id === typingUserId || m.id === typingUserId);
+          if (member) displayName = member.nama || member.name;
+        }
+
+        const finalName = displayName || 'Seseorang';
+        
+        setTypingUsers(prev => ({ ...prev, [typingUserId]: finalName }));
         
         if (userIsTyping) {
-          if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
-          remoteTypingTimeoutRef.current = setTimeout(() => {
-            setRemoteTyping('');
-          }, 3000);
+          if (remoteTypingTimeouts.current[typingUserId]) {
+            clearTimeout(remoteTypingTimeouts.current[typingUserId]);
+          }
+          remoteTypingTimeouts.current[typingUserId] = setTimeout(() => {
+            setTypingUsers(prev => {
+              const next = { ...prev };
+              delete next[typingUserId];
+              return next;
+            });
+            delete remoteTypingTimeouts.current[typingUserId];
+          }, 4000);
+        } else {
+          setTypingUsers(prev => {
+            const next = { ...prev };
+            delete next[typingUserId];
+            return next;
+          });
+          if (remoteTypingTimeouts.current[typingUserId]) {
+            clearTimeout(remoteTypingTimeouts.current[typingUserId]);
+            delete remoteTypingTimeouts.current[typingUserId];
+          }
         }
       }
     };
@@ -237,16 +276,18 @@ export default function GroupChatRoomScreen() {
 
     socket.on('new_message', handleGroupMessage);
     socket.on('group_typing_status', handleGroupTyping);
+    socket.on('typing_status', handleGroupTyping);
     socket.on('message_status_update', handleStatusUpdate);
     socket.on('group_mute_update', handleMuteUpdate); // Mendengarkan sinyal bungkam
 
     return () => {
       socket.off('new_message', handleGroupMessage);
       socket.off('group_typing_status', handleGroupTyping);
+      socket.off('typing_status', handleGroupTyping);
       socket.off('message_status_update', handleStatusUpdate);
       socket.off('group_mute_update', handleMuteUpdate);
     };
-  }, [socket, id, user?._id, token]);
+  }, [socket, id, user?._id, token, groupDetail]);
 
   const handleTyping = (text: string) => {
     setInputText(text);
@@ -786,8 +827,8 @@ export default function GroupChatRoomScreen() {
                 {groupName || 'Grup Chat'}
                 {groupDetail?.is_muted && <Text style={{ color: '#D32F2F', fontSize: 14 }}> 🔇</Text>}
               </Text>
-              <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
-                {remoteTyping || 'Klik untuk detail grup'}
+              <Text style={[styles.headerStatus, { color: typingStatusText ? theme.tint : theme.description }]}>
+                {typingStatusText || 'Klik untuk detail grup'}
               </Text>
             </TouchableOpacity>
 
@@ -993,49 +1034,55 @@ export default function GroupChatRoomScreen() {
 
           {/* The Actual Card - Separated from touchable background */}
           <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
-            {/* Header Card */}
-            <View style={styles.floatingCardHeader}>
-              <View style={[styles.avatarPlaceholderLarge, { backgroundColor: theme.tint + '20' }]}>
-                <Users size={32} color={theme.tint} />
-              </View>
-              <Text style={[styles.floatingCardTitle, { color: theme.text }]}>{groupDetail?.name}</Text>
-              {groupDetail?.subject_info && (
-                <Text style={[styles.floatingCardSubtitle, { color: theme.description }]}>
-                  {groupDetail.subject_info.code} • {groupDetail.subject_info.academic_year}
-                </Text>
-              )}
-              {groupDetail?.is_muted && (
-                <View style={[styles.muteStatusBadge, { backgroundColor: '#FFEBEE', borderWidth: 1, borderColor: '#FFCDD2' }]}>
-                  <BellOff size={14} color="#D32F2F" />
-                  <Text style={[styles.muteStatusText, { color: '#D32F2F' }]}>Mode Pengumuman Aktif (Muted)</Text>
+            {/* Scrollable Content */}
+            <View style={[styles.membersSection, { marginTop: 0 }]}>
+              <ScrollView 
+                style={styles.membersScrollView} 
+                contentContainerStyle={{ flexGrow: 1 }}
+                showsVerticalScrollIndicator={false}
+                nestedScrollEnabled={true}
+                stickyHeaderIndices={[1]}
+              >
+                {/* Index 0: Icon & Info Section */}
+                <View style={[styles.floatingCardHeader, { paddingBottom: 10, marginTop: 10 }]}>
+                  <View style={[styles.avatarPlaceholderLarge, { backgroundColor: theme.tint + '20' }]}>
+                    <Users size={32} color={theme.tint} />
+                  </View>
                 </View>
-              )}
-            </View>
 
-            <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
+                {/* Index 1: Sticky Name Section */}
+                <View style={[styles.detailHeroName, { backgroundColor: theme.card, paddingVertical: 10 }]}>
+                  <Text style={[styles.floatingCardTitle, { color: theme.text, marginTop: 0 }]}>{groupDetail?.name}</Text>
+                  {groupDetail?.subject_info && (
+                    <Text style={[styles.floatingCardSubtitle, { color: theme.description }]}>
+                      {groupDetail.subject_info.code} • {groupDetail.subject_info.academic_year}
+                    </Text>
+                  )}
+                  {groupDetail?.is_muted && (
+                    <View style={[styles.muteStatusBadge, { backgroundColor: '#FFEBEE', borderWidth: 1, borderColor: '#FFCDD2', alignSelf: 'center' }]}>
+                      <BellOff size={14} color="#D32F2F" />
+                      <Text style={[styles.muteStatusText, { color: '#D32F2F' }]}>Mode Pengumuman Aktif (Muted)</Text>
+                    </View>
+                  )}
+                  <View style={[styles.stickyNameDivider, { backgroundColor: theme.border, alignSelf: 'center' }]} />
+                </View>
 
-            {/* Scrollable Members List */}
-            <View style={styles.membersSection}>
-              <Text style={[styles.sectionLabel, { color: theme.tint }]}>
-                ANGGOTA ({groupDetail?.members?.length || 0})
-              </Text>
-              
-              <View style={{ flex: 1 }}>
-                <ScrollView 
-                  style={styles.membersScrollView} 
-                  contentContainerStyle={{ flexGrow: 1 }}
-                  showsVerticalScrollIndicator={false}
-                  nestedScrollEnabled={true}
-                >
+                {/* Index 2+: Members List */}
+                <View style={{ paddingHorizontal: 0, paddingTop: 10 }}>
+                  <Text style={[styles.sectionLabel, { color: theme.tint, marginBottom: 15 }]}>
+                    ANGGOTA ({groupDetail?.members?.length || 0})
+                  </Text>
+                  
                   {isLoadingDetail ? (
                     <ActivityIndicator size="large" color={theme.tint} style={{ marginTop: 20 }} />
                   ) : (
+
                     groupDetail?.members?.map((member: any, index: number) => {
                       // Prepared for upcoming BE update with 'role' field
                       // Fallback to current 'admins' list check for backward compatibility
-                      const directRole = (member.role || '').toLowerCase();
-                      const isAdminList = groupDetail?.admins?.some((admin: any) => admin._id === member._id || admin.id === member._id);
-                      const isDosenMember = directRole === 'dosen' || directRole === 'admin' || isAdminList || (groupDetail?.creator?._id === member._id);
+                      const isDosenMember = groupDetail?.admins?.some((admin: any) => 
+                        (typeof admin === 'string' ? admin === member._id : admin._id === member._id)
+                      );
                       
                       const mName = member.nama || member.name || 'Anggota';
                       const mId = member.nim || member._id || member.id;
@@ -1073,8 +1120,8 @@ export default function GroupChatRoomScreen() {
                       );
                     })
                   )}
-                </ScrollView>
-              </View>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </View>
@@ -1189,14 +1236,16 @@ export default function GroupChatRoomScreen() {
           </TouchableWithoutFeedback>
 
           <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
-            <View style={styles.floatingCardHeader}>
-              <View style={[styles.floatingIconContainer, { backgroundColor: '#F3E5F5' }]}>
+            <View style={[styles.floatingCardHeader, { flexDirection: 'column', alignItems: 'center' }]}>
+              <View style={[styles.floatingIconContainer, { backgroundColor: '#F3E5F5', marginRight: 0, marginBottom: 12 }]}>
                 <FileText size={24} color="#9C27B0" />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.floatingCardTitle, { color: theme.text, textAlign: 'left' }]}>Materi Silabus</Text>
-                <Text style={[styles.floatingCardSubtitle, { color: theme.description, textAlign: 'left' }]}>Materi Pertemuan 1-14</Text>
-              </View>
+              <Text style={[styles.floatingCardTitle, { color: theme.text, textAlign: 'center' }]} numberOfLines={1}>
+                {groupDetail?.name}
+              </Text>
+              <Text style={[styles.floatingCardSubtitle, { color: theme.description, textAlign: 'center' }]}>
+                Materi Silabus
+              </Text>
             </View>
 
             <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
@@ -1502,14 +1551,16 @@ export default function GroupChatRoomScreen() {
           </TouchableWithoutFeedback>
 
           <View style={[styles.floatingCard, { backgroundColor: theme.card }]}>
-            <View style={styles.floatingCardHeader}>
-              <View style={[styles.floatingIconContainer, { backgroundColor: '#E3F2FD' }]}>
+            <View style={[styles.floatingCardHeader, { flexDirection: 'column', alignItems: 'center' }]}>
+              <View style={[styles.floatingIconContainer, { backgroundColor: '#E3F2FD', marginRight: 0, marginBottom: 12 }]}>
                 <BookOpen size={24} color="#2196F3" />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.floatingCardTitle, { color: theme.text, textAlign: 'left' }]}>Tugas Kuliah</Text>
-                <Text style={[styles.floatingCardSubtitle, { color: theme.description, textAlign: 'left' }]}>Daftar Tugas Aktif & Selesai</Text>
-              </View>
+              <Text style={[styles.floatingCardTitle, { color: theme.text, textAlign: 'center' }]} numberOfLines={1}>
+                {groupDetail?.name}
+              </Text>
+              <Text style={[styles.floatingCardSubtitle, { color: theme.description, textAlign: 'center' }]}>
+                Tugas Kuliah
+              </Text>
             </View>
 
             <View style={[styles.floatingCardDivider, { backgroundColor: theme.border }]} />
@@ -2297,5 +2348,22 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
     fontSize: 15,
+  },
+  detailHeroName: {
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  stickyNameDivider: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    marginTop: 15,
   },
 });
