@@ -1,4 +1,4 @@
-import { PostData } from '@/components/PostCard';
+import { PostCard, PostData } from '@/components/PostCard';
 import { PostDetailModal } from '@/components/PostDetailModal';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -8,11 +8,12 @@ import { BASE_URL } from '@/utils/api';
 import { followUser, getFollowers, getFollowing, getOtherUserProfile, unfollowUser } from '@/utils/follow';
 import { getAvatarUrl } from '@/utils/avatar';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Calendar, ChevronLeft, GraduationCap, Grid, Menu, MessageSquare, Repeat } from 'lucide-react-native';
+import { Calendar, ChevronLeft, GraduationCap, Layout as ListIcon, Menu, MessageSquare, Repeat } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
 import { subscribeToCommentSync } from '@/utils/commentSyncStore';
+import { scale, verticalScale, moderateScale } from '@/utils/responsive';
 import { getOrCreateConversation } from '@/utils/chat';
 
 export default function UserProfileScreen() {
@@ -391,13 +392,13 @@ export default function UserProfileScreen() {
         <ScrollView 
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 110 }}
-          stickyHeaderIndices={[4]}
+          stickyHeaderIndices={[5]}
           refreshControl={
             <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={theme.tint} />
           }
         >
           {/* Header Profile Section */}
-          <View style={styles.profileHeaderLayout}>
+          <View style={[styles.profileHeaderLayout, { marginBottom: 15 }]}>
             <View style={[styles.tiktokAvatarContainer, { borderColor: theme.border }]}>
               <Image source={{ uri: studentData.avatar }} style={styles.tiktokAvatar} />
             </View>
@@ -405,43 +406,47 @@ export default function UserProfileScreen() {
               <Text style={[styles.tiktokNameText, { color: theme.text }]} numberOfLines={1}>{studentData.name}</Text>
               <Text style={[styles.tiktokUsernameText, { color: theme.description }]}>@{studentData.nim}</Text>
             </View>
-            
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-              <TouchableOpacity 
-                style={[
-                  styles.followButton, 
-                  { backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
-                ]}
-                onPress={handleFollowToggle}
-                disabled={isFollowLoading}
-              >
-                {isFollowLoading ? (
-                  <ActivityIndicator size="small" color={isFollowing ? theme.text : "#FFF"} />
-                ) : (
-                  <Text style={[
-                    styles.followButtonText, 
-                    { color: isFollowing ? theme.text : "#FFF" }
-                  ]}>
-                    {isFollowing ? 'Mengikuti' : 'Ikuti'}
-                  </Text>
-                )}
-              </TouchableOpacity>
+          </View>
 
-              <TouchableOpacity 
-                style={[
-                  styles.dmButton, 
-                  { backgroundColor: theme.border + '30' }
-                ]}
-                onPress={handleDM}
-                disabled={isDMLoading}
-              >
-                {isDMLoading ? (
-                  <ActivityIndicator size="small" color={theme.tint} />
-                ) : (
-                  <MessageSquare size={20} color={theme.text} />
-                )}
-              </TouchableOpacity>
-            </View>
+          {/* Action Buttons Row */}
+          <View style={{ flexDirection: 'row', paddingHorizontal: 20, gap: 10, marginBottom: 20 }}>
+            <TouchableOpacity 
+              style={[
+                styles.followButton, 
+                { flex: 1, backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
+              ]}
+              onPress={handleFollowToggle}
+              disabled={isFollowLoading}
+            >
+              {isFollowLoading ? (
+                <ActivityIndicator size="small" color={isFollowing ? theme.text : "#FFF"} />
+              ) : (
+                <Text style={[
+                  styles.followButtonText, 
+                  { color: isFollowing ? theme.text : "#FFF" }
+                ]}>
+                  {isFollowing ? 'Mengikuti' : 'Ikuti'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[
+                styles.dmButton, 
+                { flex: 1, width: 'auto', backgroundColor: theme.border + '30', flexDirection: 'row', gap: 6 }
+              ]}
+              onPress={handleDM}
+              disabled={isDMLoading}
+            >
+              {isDMLoading ? (
+                <ActivityIndicator size="small" color={theme.text} />
+              ) : (
+                <>
+                  <MessageSquare size={18} color={theme.text} />
+                  <Text style={[styles.followButtonText, { color: theme.text }]}>Pesan</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
 
         {/* Stats Row */}
@@ -502,7 +507,7 @@ export default function UserProfileScreen() {
               style={[styles.tabItem, activeTab === 'posts' && { borderBottomColor: theme.tint, borderBottomWidth: 2 }]}
               onPress={() => setActiveTab('posts')}
             >
-              <Grid size={20} color={activeTab === 'posts' ? theme.tint : theme.description} />
+              <ListIcon size={20} color={activeTab === 'posts' ? theme.tint : theme.description} />
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.tabItem, activeTab === 'reposts' && { borderBottomColor: theme.tint, borderBottomWidth: 2 }]}
@@ -519,41 +524,17 @@ export default function UserProfileScreen() {
             <ActivityIndicator color={theme.tint} />
           </View>
         ) : (
-          <View style={styles.gridContainer}>
+          <View style={{ paddingBottom: 20 }}>
             {activeTab === 'posts' ? (
               posts.length > 0 ? (
                 posts.map((post) => (
-                  <TouchableOpacity 
+                  <PostCard 
                     key={post._id} 
-                    style={[styles.gridItem, { backgroundColor: theme.card }]}
-                    onPress={() => {
-                      setSelectedPost(post);
-                      setIsDetailVisible(true);
+                    post={post}
+                    onDeleteSuccess={() => {
+                      setPosts(prev => prev.filter(p => p._id !== post._id));
                     }}
-                  >
-                    {post.media && post.media.length > 0 ? (
-                      <Image 
-                        source={{ uri: post.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (post.type === 'repost' && post.original_post_id?.media && post.original_post_id.media.length > 0) ? (
-                      <Image 
-                        source={{ uri: post.original_post_id.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={{ flex: 1, backgroundColor: theme.border, justifyContent: 'center', alignItems: 'center' }}>
-                         <Text style={{ color: theme.description, fontSize: 10 }}>No Media</Text>
-                      </View>
-                    )}
-                    {post.type === 'repost' && (
-                      <View style={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 4 }}>
-                         <Repeat size={12} color="#FFF" />
-                      </View>
-                    )}
-                  </TouchableOpacity>
+                  />
                 ))
               ) : (
                 <View style={styles.emptyContainer}>
@@ -563,32 +544,13 @@ export default function UserProfileScreen() {
             ) : (
               reposts.length > 0 ? (
                 reposts.map((post) => (
-                  <TouchableOpacity 
+                  <PostCard 
                     key={post._id} 
-                    style={[styles.gridItem, { backgroundColor: theme.card }]}
-                    onPress={() => openRepostDetail(post)}
-                  >
-                    {post.media && post.media.length > 0 ? (
-                      <Image 
-                        source={{ uri: post.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (post.type === 'repost' && post.original_post_id?.media && post.original_post_id.media.length > 0) ? (
-                      <Image 
-                        source={{ uri: post.original_post_id.media[0].url }} 
-                        style={{ width: '100%', height: '100%' }} 
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={{ flex: 1, backgroundColor: theme.border, justifyContent: 'center', alignItems: 'center' }}>
-                         <Text style={{ color: theme.description, fontSize: 10 }}>No Media</Text>
-                      </View>
-                    )}
-                    <View style={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 4 }}>
-                       <Repeat size={12} color="#FFF" />
-                    </View>
-                  </TouchableOpacity>
+                    post={post}
+                    onDeleteSuccess={() => {
+                      setReposts(prev => prev.filter(p => p._id !== post._id));
+                    }}
+                  />
                 ))
               ) : (
                 <View style={styles.emptyContainer}>
@@ -636,17 +598,17 @@ const styles = StyleSheet.create({
   profileHeaderLayout: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    marginTop: 15,
-    marginBottom: 20,
+    paddingHorizontal: scale(20),
+    marginTop: verticalScale(15),
+    marginBottom: verticalScale(15),
   },
   customHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 45,
-    paddingBottom: 10,
-    paddingHorizontal: 15,
+    paddingTop: verticalScale(45),
+    paddingBottom: verticalScale(10),
+    paddingHorizontal: scale(15),
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -655,10 +617,10 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: moderateScale(20),
+    borderTopRightRadius: moderateScale(20),
     backgroundColor: '#FFFFFF',
-    marginTop: 10,
+    marginTop: verticalScale(10),
     overflow: 'hidden',
   },
   headerLeft: {
@@ -666,84 +628,83 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitleText: {
-    fontSize: 20,
+    fontSize: moderateScale(20),
     fontWeight: 'bold',
     flex: 1,
     textAlign: 'center',
   },
   backButton: {
-    width: 40,
-    height: 40,
+    width: scale(40),
+    height: scale(40),
     justifyContent: 'center',
     alignItems: 'center',
   },
   menuBtn: {
-    width: 40,
-    height: 40,
+    width: scale(40),
+    height: scale(40),
     justifyContent: 'center',
     alignItems: 'center',
   },
   tiktokAvatarContainer: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
+    width: moderateScale(86),
+    height: moderateScale(86),
+    borderRadius: moderateScale(43),
     borderWidth: 1,
     overflow: 'hidden',
     backgroundColor: '#FFF',
-    marginRight: 20,
+    marginRight: scale(20),
   },
   tiktokAvatar: { width: '100%', height: '100%' },
   tiktokNameContainer: { 
     flex: 1, 
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: scale(10),
   },
   tiktokNameText: { 
-    fontSize: 22, 
+    fontSize: moderateScale(22), 
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: verticalScale(4),
   },
-  tiktokUsernameText: { fontSize: 14 },
+  tiktokUsernameText: { fontSize: moderateScale(14) },
   followButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    minWidth: 100,
+    paddingHorizontal: scale(20),
+    paddingVertical: verticalScale(10),
+    borderRadius: moderateScale(8),
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  followButtonText: { fontSize: 14, fontWeight: 'bold' },
+  followButtonText: { fontSize: moderateScale(14), fontWeight: 'bold' },
   dmButton: {
-    width: 44,
-    height: 40,
-    borderRadius: 8,
+    borderRadius: moderateScale(8),
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: verticalScale(10),
   },
   statsRow: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    marginBottom: 20,
+    paddingHorizontal: scale(20),
+    marginBottom: verticalScale(20),
   },
   statBox: { 
-    marginRight: 40, 
+    marginRight: scale(40), 
     alignItems: 'flex-start' 
   },
   statNumber: { 
-    fontSize: 18, 
+    fontSize: moderateScale(18), 
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: verticalScale(4),
   },
-  statLabel: { fontSize: 13 },
+  statLabel: { fontSize: moderateScale(13) },
   bioContainer: { 
-    paddingHorizontal: 20, 
-    marginBottom: 25 
+    paddingHorizontal: scale(20), 
+    marginBottom: verticalScale(25) 
   },
-  bioText: { fontSize: 14, lineHeight: 20 },
+  bioText: { fontSize: moderateScale(14), lineHeight: moderateScale(20) },
   card: {
-    padding: 22,
-    marginHorizontal: 15,
-    marginBottom: 12,
-    borderRadius: 16,
+    padding: scale(22),
+    marginHorizontal: scale(15),
+    marginBottom: verticalScale(12),
+    borderRadius: moderateScale(16),
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
@@ -751,40 +712,40 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: moderateScale(18),
     fontWeight: 'bold',
-    marginBottom: 15,
+    marginBottom: verticalScale(15),
   },
   infoItem: { 
     flexDirection: 'row', 
     alignItems: 'center', 
-    marginBottom: 18, 
-    gap: 15 
+    marginBottom: verticalScale(18), 
+    gap: scale(15) 
   },
   infoTextContainer: { flex: 1 },
-  infoLabel: { fontSize: 12, marginBottom: 2 },
-  infoValue: { fontSize: 15, fontWeight: '600' },
+  infoLabel: { fontSize: moderateScale(12), marginBottom: verticalScale(2) },
+  infoValue: { fontSize: moderateScale(15), fontWeight: '600' },
   statusBadge: { 
-    paddingHorizontal: 10, 
-    paddingVertical: 4, 
-    borderRadius: 6, 
+    paddingHorizontal: scale(10), 
+    paddingVertical: verticalScale(4), 
+    borderRadius: moderateScale(6), 
     alignSelf: 'flex-start',
-    marginTop: 4,
+    marginTop: verticalScale(4),
   },
-  statusText: { fontSize: 12, fontWeight: 'bold' },
+  statusText: { fontSize: moderateScale(12), fontWeight: 'bold' },
   tabContent: {
     flex: 1,
-    marginTop: 5,
+    marginTop: verticalScale(5),
   },
   tabHeader: { flexDirection: 'row', borderBottomWidth: 1 },
-  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15 },
+  tabItem: { flex: 1, alignItems: 'center', paddingVertical: verticalScale(15) },
   gridContainer: { flexDirection: 'row', flexWrap: 'wrap', padding: 1 },
   gridItem: { width: '33.33%', aspectRatio: 1, borderWidth: 0.5, padding: 1 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 15 },
-  loadingText: { fontSize: 14, fontWeight: '500' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: scale(15) },
+  loadingText: { fontSize: moderateScale(14), fontWeight: '500' },
   emptyContainer: {
     flex: 1,
-    padding: 40,
+    padding: scale(40),
     alignItems: 'center',
     width: '100%',
   },

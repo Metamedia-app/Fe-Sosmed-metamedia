@@ -16,6 +16,7 @@ import StoryViewer from '@/components/StoryViewer';
 import StoryViewersModal from '@/components/StoryViewersModal';
 import { subscribeToCommentSync } from '@/utils/commentSyncStore';
 import { BASE_URL } from '@/utils/api';
+import { scale, verticalScale, moderateScale } from '@/utils/responsive';
 
 // No dummy stories needed
 
@@ -37,6 +38,7 @@ export default function HomeScreen() {
   const [isStoryViewerVisible, setIsStoryViewerVisible] = useState(false);
   const [isViewersVisible, setIsViewersVisible] = useState(false);
   const [selectedStoryGroup, setSelectedStoryGroup] = useState<Story[]>([]);
+  const [initialStoryIndex, setInitialStoryIndex] = useState(0);
   const [activeStoryIdForViewers, setActiveStoryIdForViewers] = useState<string | null>(null);
   
   // Anti-duplicate & Anti-stale event tracker
@@ -289,6 +291,17 @@ export default function HomeScreen() {
     setPosts((prev) => prev.filter((p) => p._id !== postId && (p as any).id !== postId));
   };
 
+  const handleStorySeen = (storyId: string) => {
+    setStories((prev: any) => 
+      prev.map((group: any) => ({
+        ...group,
+        items: (group.items || []).map((item: any) => 
+          item._id === storyId ? { ...item, is_viewed: true } : item
+        )
+      }))
+    );
+  };
+
   const groupedStories = useMemo(() => {
     // Current stories state now contains StoryGroup[] from the API
     const groups = (stories as any[]).map(group => {
@@ -320,15 +333,19 @@ export default function HomeScreen() {
              type: story.media?.type || (mediaUrl.match(/\.(mp4|mov|wmv|avi|flv|mkv|webm)$/i) ? 'video' : 'image')
           }
         };
-      });
+      }).sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
       return {
         author,
-        stories: normalizedItems
+        stories: normalizedItems,
+        hasUnseen: normalizedItems.some((s: any) => !s.is_viewed)
       };
     });
 
-    // Sort so user's story is first, then by latest story date
+    // Sort: 
+    // 1. My Story
+    // 2. Groups with Unseen stories (newest first)
+    // 3. Groups with All Seen stories (newest first)
     return groups.sort((a, b) => {
       const aId = (a.author?._id || a.author?.id || "").toString().toLowerCase();
       const bId = (b.author?._id || b.author?.id || "").toString().toLowerCase();
@@ -336,10 +353,17 @@ export default function HomeScreen() {
       
       if (aId === myId) return -1;
       if (bId === myId) return 1;
+
+      // Prioritize Unseen
+      if (a.hasUnseen && !b.hasUnseen) return -1;
+      if (!a.hasUnseen && b.hasUnseen) return 1;
       
       const getLatestTime = (g: any) => {
-        const dateStr = g.stories[0]?.createdAt || g.stories[0]?.created_at;
-        const time = new Date(dateStr).getTime();
+        // Use the latest story's time for sorting groups
+        const latestStory = [...g.stories].sort((s1, s2) => 
+          new Date(s2.createdAt).getTime() - new Date(s1.createdAt).getTime()
+        )[0];
+        const time = new Date(latestStory?.createdAt).getTime();
         return isNaN(time) ? 0 : time;
       };
 
@@ -352,6 +376,11 @@ export default function HomeScreen() {
     const otherGroups = groupedStories.filter(g => g.author._id !== user?._id && g.author._id !== user?.id);
 
     const handleOpenGroup = (groupStories: Story[]) => {
+      // Find the first unseen story index
+      const firstUnseenIndex = groupStories.findIndex((s: any) => !s.is_viewed);
+      const startIndex = firstUnseenIndex === -1 ? 0 : firstUnseenIndex;
+      
+      setInitialStoryIndex(startIndex);
       setSelectedStoryGroup(groupStories);
       setIsStoryViewerVisible(true);
     };
@@ -359,25 +388,30 @@ export default function HomeScreen() {
     return (
       <View style={[styles.storyContainer, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
         {/* Fixed User Story Slot */}
-        <TouchableOpacity 
-          style={styles.fixedStory} 
-          onPress={() => myGroup ? handleOpenGroup(myGroup.stories) : setIsCreateStoryVisible(true)}
-        >
-          <View style={[styles.avatarRing, { borderColor: myGroup ? theme.tint : theme.border }]}>
-            <Image 
-              source={{ uri: getAvatarUrl(user || { nama: 'Fajar' }, true) }} 
-              style={styles.storyAvatar} 
-            />
-            {!myGroup && (
-              <View style={[styles.plusIcon, { backgroundColor: theme.tint }]}>
-                <Plus size={12} color="#FFF" />
-              </View>
-            )}
-          </View>
-          <Text style={[styles.storyName, { color: theme.text }]} numberOfLines={1}>
+        <View style={styles.fixedStory}>
+          <TouchableOpacity 
+            activeOpacity={0.8}
+            onPress={() => myGroup ? handleOpenGroup(myGroup.stories) : setIsCreateStoryVisible(true)}
+          >
+            <View style={[styles.avatarRing, { borderColor: (myGroup && (myGroup as any).hasUnseen) ? theme.tint : theme.border }]}>
+              <Image 
+                source={{ uri: getAvatarUrl(user || { nama: 'Fajar' }, true) }} 
+                style={styles.storyAvatar} 
+              />
+            </View>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.plusIcon, { backgroundColor: theme.tint, position: 'absolute', bottom: verticalScale(18), right: scale(12), zIndex: 10 }]}
+            onPress={() => setIsCreateStoryVisible(true)}
+          >
+            <Plus size={scale(12)} color="#FFF" />
+          </TouchableOpacity>
+
+          <Text style={[styles.storyName, { color: theme.text, marginTop: 6 }]} numberOfLines={1}>
             {myGroup ? 'Cerita Anda' : 'Buat Cerita'}
           </Text>
-        </TouchableOpacity>
+        </View>
 
         {/* Separator Divider */}
         {otherGroups.length > 0 && (
@@ -391,21 +425,25 @@ export default function HomeScreen() {
           contentContainerStyle={styles.storyContent}
         >
           {otherGroups.map((group, index) => (
-            <TouchableOpacity 
+            <View 
               key={group.author?._id || group.author?.id || `group-${index}`} 
               style={styles.storyItem}
-              onPress={() => handleOpenGroup(group.stories)}
             >
-              <View style={[styles.avatarRing, { borderColor: theme.tint }]}>
-                <Image 
-                  source={{ uri: getAvatarUrl(group.author, true) }} 
-                  style={styles.storyAvatar} 
-                />
-              </View>
-              <Text style={[styles.storyName, { color: theme.text }]} numberOfLines={1}>
+              <TouchableOpacity 
+                activeOpacity={0.8}
+                onPress={() => handleOpenGroup(group.stories)}
+              >
+                <View style={[styles.avatarRing, { borderColor: group.hasUnseen ? theme.tint : theme.border }]}>
+                  <Image 
+                    source={{ uri: getAvatarUrl(group.author, true) }} 
+                    style={styles.storyAvatar} 
+                  />
+                </View>
+              </TouchableOpacity>
+              <Text style={[styles.storyName, { color: theme.text, marginTop: verticalScale(4) }]} numberOfLines={1}>
                 {group.author.nama}
               </Text>
-            </TouchableOpacity>
+            </View>
           ))}
         </ScrollView>
       </View>
@@ -470,8 +508,10 @@ export default function HomeScreen() {
       <StoryViewer 
         isVisible={isStoryViewerVisible}
         stories={selectedStoryGroup}
+        initialIndex={initialStoryIndex}
         isPaused={isViewersVisible}
         onClose={() => setIsStoryViewerVisible(false)}
+        onStorySeen={handleStorySeen}
         onViewersClick={(id) => {
           setActiveStoryIdForViewers(id);
           setIsViewersVisible(true);
@@ -492,18 +532,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    paddingBottom: 100,
+    paddingBottom: verticalScale(100),
   },
   storyContainer: {
-    paddingVertical: 18,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginHorizontal: 10,
-    marginTop: 10,
-    marginBottom: 5,
-    flexDirection: 'row', // Align fixed story and scrollable list
+    paddingVertical: verticalScale(18),
+    borderRadius: moderateScale(12),
+    marginHorizontal: scale(10),
+    marginTop: verticalScale(10),
+    marginBottom: verticalScale(5),
+    flexDirection: 'row',
     alignItems: 'center',
-    // Elevated Fresh Look
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -511,54 +549,52 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   fixedStory: {
-    paddingLeft: 15,
     alignItems: 'center',
-    width: 90,
+    width: scale(80),
+    position: 'relative',
+    marginLeft: scale(5),
   },
   storyDivider: {
     width: 1,
-    height: 40,
-    marginHorizontal: 5,
+    height: verticalScale(35),
+    marginHorizontal: scale(8),
+    opacity: 0.5,
   },
   storyContent: {
-    paddingRight: 15,
-    gap: 15,
-    paddingLeft: 5,
+    paddingRight: scale(15),
+    gap: scale(12),
   },
   storyItem: {
     alignItems: 'center',
-    width: 75,
+    width: scale(80),
+    marginTop: verticalScale(1), // Ubah angka ini untuk naik-turunkan story teman
   },
   avatarRing: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: moderateScale(72),
+    height: moderateScale(72),
+    borderRadius: moderateScale(36),
     borderWidth: 2.5,
     padding: 3,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    marginBottom: 6,
   },
   storyAvatar: {
     width: '100%',
     height: '100%',
-    borderRadius: 32,
+    borderRadius: moderateScale(32),
   },
   plusIcon: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: moderateScale(22),
+    height: moderateScale(22),
+    borderRadius: moderateScale(11),
     borderWidth: 2.5,
     borderColor: '#FFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
   storyName: {
-    fontSize: 12,
+    fontSize: moderateScale(12),
     textAlign: 'center',
     fontWeight: '600',
   },
@@ -566,25 +602,25 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
-    marginTop: 40,
+    padding: scale(20),
+    marginTop: verticalScale(40),
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: moderateScale(16),
     textAlign: 'center',
   },
   errorText: {
-    fontSize: 14,
+    fontSize: moderateScale(14),
     textAlign: 'center',
-    marginBottom: 15,
+    marginBottom: verticalScale(15),
   },
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 8,
+    paddingHorizontal: scale(15),
+    paddingVertical: verticalScale(8),
+    borderRadius: moderateScale(8),
+    gap: scale(8),
   },
   retryButtonText: {
     color: '#FFF',

@@ -30,6 +30,7 @@ interface StoryViewerProps {
   onClose: () => void;
   onAllStoriesEnd?: () => void;
   onViewersClick?: (storyId: string) => void;
+  onStorySeen?: (storyId: string) => void;
   isPaused?: boolean;
 }
 
@@ -40,6 +41,7 @@ export default function StoryViewer({
   onClose, 
   onAllStoriesEnd,
   onViewersClick,
+  onStorySeen,
   isPaused = false
 }: StoryViewerProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -95,6 +97,7 @@ export default function StoryViewer({
     if (!token || !storyId) return;
     try {
       await storyService.recordView(token, storyId);
+      if (onStorySeen) onStorySeen(storyId);
     } catch (error) {
        // Silently fail view recording
     }

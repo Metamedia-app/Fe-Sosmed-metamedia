@@ -1423,7 +1423,7 @@ export default function GroupChatRoomScreen() {
                 contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 16 }}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-                scrollEnabled={false}
+                scrollEnabled={true}
               >
                 <View style={[styles.uploadForm, { marginTop: 4 }]}>
                   <View style={{ marginBottom: 0 }}>

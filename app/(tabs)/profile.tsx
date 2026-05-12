@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
 import { subscribeToCommentSync } from '@/utils/commentSyncStore';
+import { scale, verticalScale, moderateScale } from '@/utils/responsive';
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -398,11 +399,6 @@ export default function ProfileScreen() {
             <Text style={[styles.tiktokNameText, { color: theme.text }]} numberOfLines={1}>
               {studentData.name}
             </Text>
-            {user?.email && (
-              <View style={{ marginLeft: 6 }}>
-                <BadgeCheck size={20} color="#3897f0" fill="#3897f0" />
-              </View>
-            )}
           </View>
           <Text style={[styles.tiktokUsernameText, { color: theme.description }]}>@{studentData.nim}</Text>
         </View>
@@ -613,18 +609,18 @@ const styles = StyleSheet.create({
   profileHeaderLayout: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    marginTop: 15,
-    marginBottom: 20,
+    paddingHorizontal: scale(20),
+    marginTop: verticalScale(15),
+    marginBottom: verticalScale(20),
   },
   tiktokAvatarContainer: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
+    width: moderateScale(86),
+    height: moderateScale(86),
+    borderRadius: moderateScale(43),
     borderWidth: 1,
     overflow: 'hidden',
     backgroundColor: '#FFF',
-    marginRight: 20,
+    marginRight: scale(20),
   },
   tiktokAvatar: {
     width: '100%',
@@ -633,62 +629,61 @@ const styles = StyleSheet.create({
   tiktokNameContainer: {
     flex: 1,
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: scale(10),
   },
   tiktokNameText: {
-    fontSize: 22,
+    fontSize: moderateScale(22),
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: verticalScale(4),
   },
   tiktokUsernameText: {
-    fontSize: 14,
+    fontSize: moderateScale(14),
   },
   tiktokEditButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingHorizontal: scale(20),
+    paddingVertical: verticalScale(8),
+    borderRadius: moderateScale(6),
     justifyContent: 'center',
     alignItems: 'center',
   },
   tiktokEditButtonText: {
-    fontSize: 14,
+    fontSize: moderateScale(14),
     fontWeight: 'bold',
   },
   statsRow: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    marginBottom: 20,
+    paddingHorizontal: scale(20),
+    marginBottom: verticalScale(20),
   },
   statBox: {
-    marginRight: 40,
+    marginRight: scale(40),
     alignItems: 'flex-start',
   },
   statNumber: {
-    fontSize: 18,
+    fontSize: moderateScale(18),
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: verticalScale(4),
   },
   statLabel: {
-    fontSize: 13,
+    fontSize: moderateScale(13),
   },
   bioContainer: {
-    paddingHorizontal: 20,
-    marginBottom: 25,
+    paddingHorizontal: scale(20),
+    marginBottom: verticalScale(25),
   },
   bioText: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: moderateScale(14),
+    lineHeight: moderateScale(20),
   },
   addBioText: {
-    fontSize: 14,
+    fontSize: moderateScale(14),
     fontWeight: '500',
   },
   card: {
-    padding: 22,
-    marginBottom: 12,
-    marginHorizontal: 15,
-    borderRadius: 16,
-    // Modern Box Shadow
+    padding: scale(22),
+    marginBottom: verticalScale(12),
+    marginHorizontal: scale(15),
+    borderRadius: moderateScale(16),
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
@@ -696,41 +691,41 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: moderateScale(18),
     fontWeight: 'bold',
-    marginBottom: 15,
+    marginBottom: verticalScale(15),
   },
   infoItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 18,
-    gap: 15,
+    marginBottom: verticalScale(18),
+    gap: scale(15),
   },
   infoTextContainer: {
     flex: 1,
   },
   infoLabel: {
-    fontSize: 12,
-    marginBottom: 2,
+    fontSize: moderateScale(12),
+    marginBottom: verticalScale(2),
   },
   infoValue: {
-    fontSize: 15,
+    fontSize: moderateScale(15),
     fontWeight: '600',
   },
   statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: scale(10),
+    paddingVertical: verticalScale(4),
+    borderRadius: moderateScale(6),
     alignSelf: 'flex-start',
-    marginTop: 4,
+    marginTop: verticalScale(4),
   },
   statusText: {
-    fontSize: 12,
+    fontSize: moderateScale(12),
     fontWeight: 'bold',
   },
   tabContent: {
     flex: 1,
-    marginTop: 5,
+    marginTop: verticalScale(5),
   },
   tabHeader: {
     flexDirection: 'row',
@@ -739,24 +734,24 @@ const styles = StyleSheet.create({
   tabItem: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 15,
+    paddingVertical: verticalScale(15),
   },
   listContainer: {
-    paddingBottom: 20,
+    paddingBottom: verticalScale(20),
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 15,
+    gap: scale(15),
   },
   loadingText: {
-    fontSize: 14,
+    fontSize: moderateScale(14),
     fontWeight: '500',
   },
   emptyContainer: {
     flex: 1,
-    padding: 40,
+    padding: scale(40),
     alignItems: 'center',
     width: '100%',
   },

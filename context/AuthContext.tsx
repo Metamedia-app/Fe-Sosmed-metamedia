@@ -127,9 +127,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Based on confirmed structure: { success: true, data: { user: { ... } } }
         const userData = result.data?.user || result.data || result;
         
-        // Ensure id compatibility
+        // Ensure id compatibility & Google data compatibility
         if (userData._id && !userData.id) userData.id = userData._id;
         if (userData.id && !userData._id) userData._id = userData.id;
+        if (!userData.nama && userData.name) userData.nama = userData.name;
+        if (!userData.avatar_url && userData.picture) userData.avatar_url = userData.picture;
+        
         setUser(prev => prev ? { ...prev, ...userData } : userData);
       }
     } catch (error) {
@@ -369,7 +372,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const result = await response.json();
       if (response.ok) {
-        const { token: newToken, user: userData } = result.data || result;
+        const { token: newToken, user: rawUserData } = result.data || result;
+        const userData = { ...rawUserData };
+        
+        // Normalize Google Data & Ensure ID compatibility
+        if (userData._id && !userData.id) userData.id = userData._id;
+        if (userData.id && !userData._id) userData._id = userData.id;
+        if (!userData.nama && userData.name) userData.nama = userData.name;
+        if (!userData.avatar_url && userData.picture) userData.avatar_url = userData.picture;
         
         // --- PUSH NOTIFICATION INTEGRATION ---
         let fcmTokenResult = undefined;

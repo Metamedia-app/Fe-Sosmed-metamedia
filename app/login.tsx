@@ -191,9 +191,7 @@ export default function LoginScreen() {
             </View>
           </View>
 
-          <TouchableOpacity style={styles.forgotPassword} disabled={isLoading || countdown > 0}>
-            <Text style={{ color: theme.primary, fontWeight: '600', opacity: (isLoading || countdown > 0) ? 0.5 : 1 }}>Lupa Kata Sandi?</Text>
-          </TouchableOpacity>
+
 
           <TouchableOpacity 
             style={[
