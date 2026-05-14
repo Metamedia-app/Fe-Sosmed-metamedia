@@ -1,4 +1,5 @@
 import { PostCard, PostData } from '@/components/PostCard';
+import { PostCardSkeleton } from '@/components/PostCardSkeleton';
 import { PostDetailModal } from '@/components/PostDetailModal';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -104,16 +105,24 @@ export default function UserProfileScreen() {
         const isMatch = p._id === post_id || (p.type === 'repost' && p.original_post_id?._id === post_id);
         if (!isMatch) return p;
         
+        // IGNORE if it's our own action and the count seems stale
+        const eventAuthorId = lastEvent.data?.author_id ?? lastEvent.data?.authorId;
+        const isMyAction = eventAuthorId === (currentUser?._id || currentUser?.id);
+        
+        const finalLikes = likes_count ?? p.likes_count;
+        const finalReposts = (isMyAction && reposts_count !== undefined && reposts_count < (p.reposts_count || 0)) ? p.reposts_count : (reposts_count ?? p.reposts_count);
+        const finalShares = shares_count ?? p.shares_count;
+
         return {
           ...p,
-          likes_count: likes_count ?? p.likes_count,
-          reposts_count: reposts_count ?? p.reposts_count,
-          shares_count: shares_count ?? p.shares_count,
+          likes_count: finalLikes,
+          reposts_count: finalReposts,
+          shares_count: finalShares,
           original_post_id: p.type === 'repost' && p.original_post_id ? {
             ...p.original_post_id,
-            likes_count: likes_count ?? p.original_post_id.likes_count,
-            reposts_count: reposts_count ?? p.original_post_id.reposts_count,
-            shares_count: shares_count ?? p.original_post_id.shares_count,
+            likes_count: finalLikes,
+            reposts_count: finalReposts,
+            shares_count: finalShares,
           } : p.original_post_id
         };
       });
@@ -348,9 +357,20 @@ export default function UserProfileScreen() {
 
   if (isLoadingInitially && !targetUser) {
     return (
-      <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
-        <ActivityIndicator size="large" color={theme.tint} />
-        <Text style={[styles.loadingText, { color: theme.description }]}>Memuat profil...</Text>
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <View style={{ paddingTop: 100, paddingHorizontal: 15 }}>
+          {/* Mock profile header skeleton */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 30 }}>
+            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: theme.dark ? '#333' : '#E1E9EE', marginRight: 15 }} />
+            <View>
+              <View style={{ width: 150, height: 20, borderRadius: 4, backgroundColor: theme.dark ? '#333' : '#E1E9EE', marginBottom: 10 }} />
+              <View style={{ width: 100, height: 14, borderRadius: 4, backgroundColor: theme.dark ? '#333' : '#E1E9EE' }} />
+            </View>
+          </View>
+          {[1, 2, 3].map((i) => (
+            <PostCardSkeleton key={i} />
+          ))}
+        </View>
       </View>
     );
   }
@@ -520,8 +540,10 @@ export default function UserProfileScreen() {
         
         {/* Feed Content */}
         {isPostsLoading ? (
-          <View style={{ padding: 40, alignItems: 'center' }}>
-            <ActivityIndicator color={theme.tint} />
+          <View style={{ paddingTop: 10 }}>
+            {[1, 2].map((i) => (
+              <PostCardSkeleton key={i} />
+            ))}
           </View>
         ) : (
           <View style={{ paddingBottom: 20 }}>

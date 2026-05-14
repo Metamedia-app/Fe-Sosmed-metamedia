@@ -23,7 +23,6 @@ interface PostActionModalProps {
   onEdit: () => void;
   onDelete: () => void;
   onReport?: () => void;
-  onCopyLink?: () => void;
 }
 
 export default function PostActionModal({
@@ -33,7 +32,6 @@ export default function PostActionModal({
   onEdit,
   onDelete,
   onReport,
-  onCopyLink
 }: PostActionModalProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
@@ -127,15 +125,7 @@ export default function PostActionModal({
                   </>
                 )}
 
-                <TouchableOpacity 
-                   style={styles.optionItem} 
-                   onPress={() => handleAction(onCopyLink || (() => {}))}
-                >
-                  <View style={[styles.iconBg, { backgroundColor: theme.background }]}>
-                    <Copy size={20} color={theme.description} />
-                  </View>
-                  <Text style={[styles.optionText, { color: theme.text }]}>Salin Tautan</Text>
-                </TouchableOpacity>
+
 
                 <TouchableOpacity 
                   style={[styles.cancelButton, { backgroundColor: theme.background }]} 

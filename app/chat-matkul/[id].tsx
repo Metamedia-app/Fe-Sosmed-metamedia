@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Keyboard,
-  Modal, ScrollView, Image, TouchableWithoutFeedback, StatusBar, UIManager, LayoutAnimation, Animated
+  Modal, ScrollView, Image, TouchableWithoutFeedback, StatusBar, UIManager, LayoutAnimation
 } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
 
 
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
@@ -24,6 +25,24 @@ import * as MediaLibrary from 'expo-media-library';
 import SecureMedia from '@/components/SecureMedia';
 import { format } from 'date-fns';
 
+const ModalItemSkeleton = ({ theme }: { theme: any }) => {
+  const opacity = useSharedValue(0.3);
+  useEffect(() => {
+    opacity.value = withRepeat(withTiming(0.7, { duration: 800 }), -1, true);
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View style={[
+      { height: 65, borderRadius: 12, backgroundColor: theme.border, marginBottom: 10, width: '100%' },
+      animatedStyle
+    ]} />
+  );
+};
+
 export default function GroupChatRoomScreen() {
   const { id, groupName } = useLocalSearchParams();
   const colorScheme = useColorScheme() ?? 'light';
@@ -32,8 +51,7 @@ export default function GroupChatRoomScreen() {
   const { token, user } = useAuth();
   const { lastEvent, socket } = useSocket();
 
-  console.log('[DEBUG ROLE] Current User Role:', user?.role);
-  if (user) console.log('[DEBUG USER] Full User Data:', JSON.stringify(user));
+
   
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
@@ -158,11 +176,6 @@ export default function GroupChatRoomScreen() {
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
       () => {
         setKeyboardHeight(0);
-        setTimeout(() => {
-          inputAreaRef.current?.measureInWindow((x, y, width, height) => {
-            console.log('🔄🔄🔄 [FINAL RESET GRUP] Input Area Pos:', { x, y, width, height });
-          });
-        }, 150);
       }
     );
 
@@ -173,13 +186,7 @@ export default function GroupChatRoomScreen() {
   }, []);
 
   useEffect(() => {
-    // Manual initial position measurement
-    const timer = setTimeout(() => {
-      inputAreaRef.current?.measureInWindow((x, y, width, height) => {
-        console.log('🚀🚀🚀 [INITIAL MOUNT GRUP] Input Area Pos:', { x, y, width, height });
-      });
-    }, 1000);
-    return () => clearTimeout(timer);
+    // Initial mount logic
   }, []);
 
   useEffect(() => {
@@ -248,7 +255,6 @@ export default function GroupChatRoomScreen() {
 
     const handleStatusUpdate = (data: any) => {
       if (data.conversation_id === id) {
-        console.log('[GroupChat] Status update received:', data.status);
         setMessages(prev => prev.map(msg => {
           // Only update status if it's a progress (sent -> delivered -> read)
           const statusOrder = { 'pending': 0, 'sent': 1, 'delivered': 2, 'read': 3 };
@@ -841,21 +847,15 @@ export default function GroupChatRoomScreen() {
           </View>
 
           {/* Messages */}
-          {isLoading ? (
-            <View style={styles.centerContainer}>
-              <ActivityIndicator size="large" color={theme.tint} />
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={messages}
-              keyExtractor={(item, index) => item._id || index.toString()}
-              renderItem={renderMessage}
-              inverted
-              contentContainerStyle={styles.messagesList}
-              showsVerticalScrollIndicator={false}
-            />
-          )}
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item, index) => item._id || index.toString()}
+            renderItem={renderMessage}
+            inverted
+            contentContainerStyle={styles.messagesList}
+            showsVerticalScrollIndicator={false}
+          />
         </View>
 
         {/* Selected Image Preview */}
@@ -1074,7 +1074,13 @@ export default function GroupChatRoomScreen() {
                   </Text>
                   
                   {isLoadingDetail ? (
-                    <ActivityIndicator size="large" color={theme.tint} style={{ marginTop: 20 }} />
+                    <View style={{ gap: 5, paddingVertical: 10 }}>
+                      <ModalItemSkeleton theme={theme} />
+                      <ModalItemSkeleton theme={theme} />
+                      <ModalItemSkeleton theme={theme} />
+                      <ModalItemSkeleton theme={theme} />
+                      <ModalItemSkeleton theme={theme} />
+                    </View>
                   ) : (
 
                     groupDetail?.members?.map((member: any, index: number) => {
@@ -1258,7 +1264,12 @@ export default function GroupChatRoomScreen() {
                 nestedScrollEnabled={true}
               >
                 {isLoadingSyllabus ? (
-                  <ActivityIndicator size="large" color={theme.tint} style={{ marginVertical: 20 }} />
+                  <View style={{ paddingVertical: 10 }}>
+                    <ModalItemSkeleton theme={theme} />
+                    <ModalItemSkeleton theme={theme} />
+                    <ModalItemSkeleton theme={theme} />
+                    <ModalItemSkeleton theme={theme} />
+                  </View>
                 ) : Array.from({ length: 14 }, (_, i) => i + 1).map((num) => {
                   const material = syllabusData.find(s => s.meeting_number === num);
                   return (
@@ -1573,7 +1584,11 @@ export default function GroupChatRoomScreen() {
                 nestedScrollEnabled={true}
               >
                 {isLoadingAssignments ? (
-                  <ActivityIndicator size="large" color={theme.tint} style={{ marginVertical: 20 }} />
+                  <View style={{ paddingVertical: 10 }}>
+                    <ModalItemSkeleton theme={theme} />
+                    <ModalItemSkeleton theme={theme} />
+                    <ModalItemSkeleton theme={theme} />
+                  </View>
                 ) : assignmentsData.length > 0 ? (
                   assignmentsData.map((task) => (
                     <View key={task._id} style={styles.assignmentItem}>

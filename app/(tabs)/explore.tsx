@@ -3,7 +3,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { Search } from 'lucide-react-native';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import Animated, { useAnimatedStyle, withRepeat, withSequence, withTiming, useSharedValue } from 'react-native-reanimated';
 import { Dimensions, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
@@ -33,6 +34,33 @@ const MOMENTS = [
   { id: '8', image: 'https://picsum.photos/seed/k8/400/400' },
   { id: '9', image: 'https://picsum.photos/seed/k9/400/400' },
 ];
+
+const UserSkeleton = ({ theme }: { theme: any }) => {
+  const opacity = useSharedValue(0.3);
+  React.useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.7, { duration: 800 }),
+        withTiming(0.3, { duration: 800 })
+      ),
+      -1,
+      true
+    );
+  }, []);
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const skeletonColor = theme.dark ? '#333' : '#E1E9EE';
+
+  return (
+    <View style={[styles.searchResultItem, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Animated.View style={[styles.searchResultAvatar, animatedStyle, { backgroundColor: skeletonColor }]} />
+      <View style={styles.searchResultInfo}>
+        <Animated.View style={[{ width: '60%', height: 14, borderRadius: 4, marginBottom: 8 }, animatedStyle, { backgroundColor: skeletonColor }]} />
+        <Animated.View style={[{ width: '40%', height: 10, borderRadius: 4 }, animatedStyle, { backgroundColor: skeletonColor }]} />
+      </View>
+      <Animated.View style={[{ width: 60, height: 28, borderRadius: 8 }, animatedStyle, { backgroundColor: skeletonColor }]} />
+    </View>
+  );
+};
 
 export default function SearchScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -185,39 +213,43 @@ const SearchResultsSection = ({ theme, searchResults, isLoading, searchQuery, ro
       <Text style={{ color: theme.description, fontSize: 12 }}>{searchResults.length} ditemukan</Text>
     </View>
     <View style={styles.searchResultsList}>
-      {searchResults.map((user: SearchUser) => (
-        <TouchableOpacity 
-          key={user._id} 
-          style={[styles.searchResultItem, { backgroundColor: theme.card, borderColor: theme.border }]}
-          onPress={() => router.push({
-            pathname: "/user/[id]",
-            params: { 
-              id: user._id, 
-              initialName: user.nama, 
-              initialNim: user.nim,
-              initialAvatar: getAvatarUrl(user)
-            }
-          } as any)}
-        >
-          <Image 
-            source={{ uri: getAvatarUrl(user) }} 
-            style={styles.searchResultAvatar} 
-          />
-          <View style={styles.searchResultInfo}>
-            <Text style={[styles.searchResultName, { color: theme.text }]}>{user.nama}</Text>
-            <Text style={[styles.searchResultNim, { color: theme.description }]}>{user.nim} • {user.program_studi}</Text>
-          </View>
+      {isLoading ? (
+        [1, 2, 3].map((i) => <UserSkeleton key={i} theme={theme} />)
+      ) : (
+        searchResults.map((user: SearchUser) => (
           <TouchableOpacity 
-            style={[styles.smallFollowButton, { backgroundColor: theme.tint }]}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleFollow(user._id);
-            }}
+            key={user._id} 
+            style={[styles.searchResultItem, { backgroundColor: theme.card, borderColor: theme.border }]}
+            onPress={() => router.push({
+              pathname: "/user/[id]",
+              params: { 
+                id: user._id, 
+                initialName: user.nama, 
+                initialNim: user.nim,
+                initialAvatar: getAvatarUrl(user)
+              }
+            } as any)}
           >
-            <Text style={styles.smallFollowButtonText}>Ikuti</Text>
+            <Image 
+              source={{ uri: getAvatarUrl(user) }} 
+              style={styles.searchResultAvatar} 
+            />
+            <View style={styles.searchResultInfo}>
+              <Text style={[styles.searchResultName, { color: theme.text }]}>{user.nama}</Text>
+              <Text style={[styles.searchResultNim, { color: theme.description }]}>{user.nim} • {user.program_studi}</Text>
+            </View>
+            <TouchableOpacity 
+              style={[styles.smallFollowButton, { backgroundColor: theme.tint }]}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleFollow(user._id);
+              }}
+            >
+              <Text style={styles.smallFollowButtonText}>Ikuti</Text>
+            </TouchableOpacity>
           </TouchableOpacity>
-        </TouchableOpacity>
-      ))}
+        ))
+      )}
       {searchResults.length === 0 && !isLoading && (
         <View style={styles.emptySearch}>
           <Text style={{ color: theme.description }}>Tidak ada hasil untuk "{searchQuery}"</Text>

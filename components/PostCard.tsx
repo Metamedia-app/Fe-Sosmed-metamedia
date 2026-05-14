@@ -204,11 +204,21 @@ export const PostCard = ({
     ? true  // This post IS a repost – current user owns it, so they've reposted
     : (post.is_reposted || false);
 
-  // Counts always come from original post if available (correct total)
-  const initialRepostCount = isRepost ? (post.original_post_id?.reposts_count ?? post.reposts_count) : post.reposts_count;
-  const initialLikeCount = isRepost ? (post.original_post_id?.likes_count ?? post.likes_count) : post.likes_count;
-  const initialCommentCount = isRepost ? (post.original_post_id?.comments_count ?? post.comments_count) : post.comments_count;
-  const initialShareCount = isRepost ? (post.original_post_id?.shares_count ?? post.shares_count) : post.shares_count;
+  const initialRepostCount = isRepost 
+    ? (post.original_post_id?.reposts_count ?? post.reposts_count ?? 0) 
+    : (post.reposts_count || 0);
+
+  const initialLikeCount = isRepost
+    ? (post.original_post_id?.likes_count ?? post.likes_count ?? 0)
+    : (post.likes_count || 0);
+
+  const initialCommentCount = isRepost
+    ? (post.original_post_id?.comments_count ?? post.comments_count ?? 0)
+    : (post.comments_count || 0);
+
+  const initialShareCount = isRepost
+    ? (post.original_post_id?.shares_count ?? post.shares_count ?? 0)
+    : (post.shares_count || 0);
 
   const [likeCount, setLikeCount] = useState(initialLikeCount || 0);
   const [commentsCount, setCommentsCount] = useState(initialCommentCount || 0);
@@ -241,6 +251,42 @@ export const PostCard = ({
     setRepostsCount(initialRepostCount || 0);
   }, [post._id]);
 
+  // AUTO-SYNC: If this is a repost and counts are missing (common in profile tab),
+  // fetch the original post's latest stats.
+  React.useEffect(() => {
+    const fetchOriginalStats = async () => {
+      // Only fetch if it's a repost and we have an ID but potentially missing data
+      if (isRepost && post.original_post_id?._id && token) {
+        // If counts are 0 or undefined, we try to sync
+        const needsSync = (post.original_post_id.reposts_count === undefined) || 
+                          (post.reposts_count === 0 && !post.original_post_id.reposts_count);
+        
+        if (needsSync) {
+          try {
+            console.log(`[DEBUG][POSTCARD] Auto-syncing stats for original post: ${targetId}`);
+            const res = await fetch(`${BASE_URL}/posts/${targetId}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            const result = await res.json();
+            if (res.ok && result.data?.post) {
+              const orig = result.data.post;
+              console.log(`[DEBUG][POSTCARD] Sync success for ${targetId}. Reposts: ${orig.reposts_count}`);
+              setLikeCount(orig.likes_count || 0);
+              setRepostsCount(orig.reposts_count || 0);
+              setCommentsCount(orig.comments_count || 0);
+              setSharesCount(orig.shares_count || 0);
+              setIsLiked(orig.is_liked || false);
+            }
+          } catch (err) {
+            console.log(`[DEBUG][POSTCARD] Auto-sync failed:`, err);
+          }
+        }
+      }
+    };
+
+    fetchOriginalStats();
+  }, [post._id, isRepost, token]);
+
   // Sync likeCount when post.likes_count changes (e.g. from parent's socket update)
   React.useEffect(() => {
     setLikeCount(initialLikeCount || 0);
@@ -270,7 +316,6 @@ export const PostCard = ({
     if (!lastEvent) return;
 
 
-    // 1. handle NEW_COMMENT
     if (lastEvent.type === 'new_comment') {
       const data = lastEvent.data ?? {};
       const eventPostId = data.post_id ?? data.postId ?? data.id;
@@ -282,6 +327,7 @@ export const PostCard = ({
         
         // Prioritize absolute count if Backend sends it
         const serverCmtCount = data.comments_count ?? data.total_comments ?? data.comment_count;
+        console.log(`[SOCKET][NEW_COMMENT] Server truth count: ${serverCmtCount ?? 'current+1'}`);
 
         // Only update local state if we are NOT using the prop update (to avoid double count)
         // OR if the modal is open (since modal doesn't see props)
@@ -303,6 +349,12 @@ export const PostCard = ({
     if (lastEvent.type === 'new_post') {
       const newPost: PostData = lastEvent.data?.post ?? lastEvent.data;
       if (newPost?.type === 'repost' && newPost.original_post_id?._id === targetId) {
+        const authorId = newPost.author?._id || newPost.author?.id;
+        const myId = user?._id || user?.id;
+
+        // IGNORE if we are the ones who just reposted (to avoid double count)
+        if (authorId === myId) return;
+
         // Prioritize absolute count from the repost event data
         const serverRepostCount = newPost.original_post_id.reposts_count;
         if (serverRepostCount !== undefined) {
@@ -325,11 +377,15 @@ export const PostCard = ({
 
     // 3. handle REPOST_UPDATE
     if (lastEvent.type === 'repost_update') {
-      const { post_id, postId, id, reposts_count, count, repost_count } = lastEvent.data;
+      const { post_id, postId, id, reposts_count, count, repost_count, author_id, authorId: evAuthId } = lastEvent.data;
       const eventPostId = post_id ?? postId ?? id;
       const finalCount = reposts_count ?? count ?? repost_count;
+      const eventAuthorId = author_id ?? evAuthId;
+      const myId = user?._id || user?.id;
 
       if (eventPostId === targetId && finalCount !== undefined) {
+        // IGNORE if we are the ones who just reposted (to avoid reverting to old count from delayed socket)
+        if (eventAuthorId === myId) return;
         setRepostsCount(finalCount);
       }
     }
@@ -395,14 +451,16 @@ export const PostCard = ({
     }
 
     try {
-      await fetch(`${BASE_URL}/posts/${post._id}/like`, {
+      const res = await fetch(`${BASE_URL}/posts/${post._id}/like`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/json',
         },
       });
-    } catch {
+      
+      if (!res.ok) throw new Error();
+    } catch (e) {
       setIsLiked(prevLiked);
       setLikeCount(prevCount);
     }
@@ -426,49 +484,46 @@ export const PostCard = ({
       return;
     }
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setIsProcessingRepost(true);
     const prevCount = repostsCount;
     const prevReposted = isReposted;
+    
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsProcessingRepost(true);
 
-    // Optimistic update BEFORE API call
     if (isReposted) {
-      // Will UNREPOST - count goes down, turn off
       setRepostsCount(prev => Math.max(0, prev - 1));
       setIsReposted(false);
     } else {
-      // Will REPOST - count goes up, turn on
       setRepostsCount(prev => prev + 1);
       setIsReposted(true);
     }
 
     try {
-      // POST = new repost, DELETE = unrepost
-      // Backend needs: POST /posts/:id/repost AND DELETE /posts/:id/repost
       const method = prevReposted ? 'DELETE' : 'POST';
       const res = await fetch(`${BASE_URL}/posts/${targetId}/repost`, {
         method,
         headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({}),
       });
       const result = await res.json();
+      
       if (res.ok && result.success) {
-        // Sync count to server truth
         if (result.data?.original_reposts_count !== undefined) {
           setRepostsCount(result.data.original_reposts_count);
         }
-        // Confirm state based on what we intended
         setIsReposted(!prevReposted);
         
-        // Notify other screens (like Profile tab) to re-fetch lists
-        triggerRefresh();
+        setTimeout(() => {
+          triggerRefresh();
+        }, 500);
       } else {
         throw new Error(result.message || 'Gagal');
       }
     } catch (e: any) {
-      // Revert optimistic update on failure
       setRepostsCount(prevCount);
       setIsReposted(prevReposted);
     } finally {
@@ -494,7 +549,7 @@ export const PostCard = ({
         },
       });
       if (!res.ok) throw new Error();
-    } catch {
+    } catch (e) {
       setSharesCount(prevCount);
     }
   };
@@ -778,7 +833,6 @@ export const PostCard = ({
           confirmDelete();
         }}
         onReport={() => setIsReportModalVisible(true)}
-        onCopyLink={() => Alert.alert('Berhasil', 'Tautan berhasil disalin!')}
       />
 
       <ReportPostModal

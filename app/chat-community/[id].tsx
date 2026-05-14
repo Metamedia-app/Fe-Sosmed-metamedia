@@ -484,21 +484,15 @@ export default function CommunityChatScreen() {
             </TouchableOpacity>
           </View>
 
-          {isLoading ? (
-            <View style={styles.centerContainer}>
-              <ActivityIndicator size="large" color={theme.tint} />
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={messages}
-              keyExtractor={(item) => item._id}
-              renderItem={renderMessage}
-              inverted
-              contentContainerStyle={styles.messagesList}
-              showsVerticalScrollIndicator={false}
-            />
-          )}
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item) => item._id}
+            renderItem={renderMessage}
+            inverted
+            contentContainerStyle={styles.messagesList}
+            showsVerticalScrollIndicator={false}
+          />
         </View>
 
         {/* Selected Image Preview */}

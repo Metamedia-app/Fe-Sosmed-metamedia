@@ -177,14 +177,12 @@ export default function CreateCommunityModal({ isVisible, onClose, onSuccess }: 
             </View>
 
             <View style={[styles.header, { borderBottomColor: theme.border }]}>
-              <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-                <X size={24} color={theme.text} />
-              </TouchableOpacity>
-              <Text style={[styles.headerTitle, { color: theme.text }]}>Buat Komunitas Baru</Text>
+              <View style={{ width: 60 }} /> 
+              <Text style={[styles.headerTitle, { color: theme.text, flex: 1, textAlign: 'center' }]}>Buat Komunitas Baru</Text>
               <TouchableOpacity 
                 style={[
                   styles.createButton, 
-                  { backgroundColor: name.trim() && !isLoading ? theme.tint : theme.border }
+                  { backgroundColor: name.trim() && !isLoading ? theme.tint : theme.border, minWidth: 60, alignItems: 'center' }
                 ]}
                 disabled={!name.trim() || isLoading}
                 onPress={handleCreate}
@@ -239,10 +237,10 @@ export default function CreateCommunityModal({ isVisible, onClose, onSuccess }: 
 
                 <View style={styles.inputGroup}>
                   <Text style={[styles.label, { color: theme.description }]}>Deskripsi (Opsional)</Text>
-                  <View style={[styles.inputWrapper, { backgroundColor: theme.background, borderColor: theme.border, alignItems: 'flex-start', paddingTop: 12 }]}>
-                    <Info size={20} color={theme.description} style={{ marginTop: 2 }} />
+                  <View style={[styles.inputWrapper, { backgroundColor: theme.background, borderColor: theme.border, alignItems: 'flex-start', paddingTop: 14 }]}>
+                    <Info size={20} color={theme.description} style={{ marginTop: 0 }} />
                     <TextInput
-                      style={[styles.input, { color: theme.text, minHeight: 80 }]}
+                      style={[styles.input, { color: theme.text, minHeight: 80, paddingTop: 0, marginTop: -2 }]}
                       placeholder="Jelaskan tentang komunitas ini..."
                       placeholderTextColor={theme.description}
                       multiline

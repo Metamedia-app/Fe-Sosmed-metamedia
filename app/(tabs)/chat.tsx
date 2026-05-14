@@ -3,6 +3,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { MessageSquareText, Radio, Search, Users, Check, CheckCheck, Clock, SquarePlus } from 'lucide-react-native';
 import React, { useState, useCallback, useEffect } from 'react';
 import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Alert } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { getConversations, deleteConversation } from '@/utils/chat';
@@ -12,6 +13,27 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { format } from 'date-fns';
 import SecureMedia from '@/components/SecureMedia';
 import CreateCommunityModal from '@/components/CreateCommunityModal';
+
+const ChatSkeleton = ({ theme }: { theme: any }) => {
+  const opacity = useSharedValue(0.3);
+  useEffect(() => {
+    opacity.value = withRepeat(withTiming(0.7, { duration: 800 }), -1, true);
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return (
+    <View style={{ flexDirection: 'row', padding: 15, alignItems: 'center' }}>
+      <Animated.View style={[{ width: 50, height: 50, borderRadius: 25, backgroundColor: theme.border }, animatedStyle]} />
+      <View style={{ flex: 1, marginLeft: 15 }}>
+        <Animated.View style={[{ width: '60%', height: 16, borderRadius: 8, backgroundColor: theme.border, marginBottom: 8 }, animatedStyle]} />
+        <Animated.View style={[{ width: '80%', height: 12, borderRadius: 6, backgroundColor: theme.border }, animatedStyle]} />
+      </View>
+    </View>
+  );
+};
 
 const INBOX_DATA = [
   {
@@ -328,10 +350,13 @@ export default function ChatScreen() {
           )}
         </View>
       </View>
-
-      {isLoading && (activeCategory === 'inbox' || activeCategory === 'grup') ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color={theme.tint} />
+      {isLoading ? (
+        <View style={{ flex: 1 }}>
+          <ChatSkeleton theme={theme} />
+          <ChatSkeleton theme={theme} />
+          <ChatSkeleton theme={theme} />
+          <ChatSkeleton theme={theme} />
+          <ChatSkeleton theme={theme} />
         </View>
       ) : (
         <FlatList
@@ -344,13 +369,13 @@ export default function ChatScreen() {
             </View>
           )}
           renderItem={({ item }) => {
-            const isInbox = activeCategory === 'inbox';
-            const isGroup = activeCategory === 'grup';
-            const isCommunity = activeCategory === 'community';
-            
-            const targetUser = isInbox ? item.user : null;
-            const name = isInbox ? targetUser?.nama : (isGroup || isCommunity) ? item.name : item.name;
-            const avatar = isInbox ? targetUser?.avatar_url : (isGroup || isCommunity) ? item.avatar_url : item.avatar;
+          const isInbox = activeCategory === 'inbox';
+          const isGroup = activeCategory === 'grup';
+          const isCommunity = activeCategory === 'community';
+          
+          const targetUser = isInbox ? item.user : null;
+          const name = isInbox ? targetUser?.nama : (isGroup || isCommunity) ? item.name : item.name;
+          const avatar = isInbox ? targetUser?.avatar_url : (isGroup || isCommunity) ? item.avatar_url : item.avatar;
             
             // For groups/communities, API might not send last_message string directly or send an ID
             const defaultLastMessage = isGroup ? (item.subject_info ? `Kode: ${item.subject_info.code}` : 'Ketuk untuk membuka grup') 
@@ -465,7 +490,7 @@ export default function ChatScreen() {
           }}
         />
       )}
-
+      
       <CreateCommunityModal 
         isVisible={isCreateCommunityVisible}
         onClose={() => setIsCreateCommunityVisible(false)}

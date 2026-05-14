@@ -17,6 +17,7 @@ import StoryViewersModal from '@/components/StoryViewersModal';
 import { subscribeToCommentSync } from '@/utils/commentSyncStore';
 import { BASE_URL } from '@/utils/api';
 import { scale, verticalScale, moderateScale } from '@/utils/responsive';
+import { PostCardSkeleton } from '@/components/PostCardSkeleton';
 
 // No dummy stories needed
 
@@ -124,22 +125,30 @@ export default function HomeScreen() {
       if (!newPost?._id) return;
 
       if (newPost.type === 'repost' && newPost.original_post_id?._id) {
-        // INCREMENT REPOST COUNT ON ORIGINAL: If a new repost event arrives, 
-        // prioritize absolute count from original_post_id object if available.
         const originalId = newPost.original_post_id._id;
         const serverRepostCount = newPost.original_post_id.reposts_count;
         
         setPosts((prev) =>
           prev.map((p) => {
-            if (p._id === originalId) {
-              return { ...p, reposts_count: serverRepostCount ?? (p.reposts_count || 0) + 1 };
+            const isMatch = p._id === originalId;
+            if (isMatch) {
+              const authorId = newPost.author?._id || newPost.author?.id;
+              const isMyRepost = authorId === (user?._id || user?.id);
+              return { 
+                ...p, 
+                reposts_count: serverRepostCount ?? (p.reposts_count || 0) + 1,
+                is_reposted: isMyRepost ? true : p.is_reposted
+              };
             }
             if (p.type === 'repost' && p.original_post_id?._id === originalId) {
+              const authorId = newPost.author?._id || newPost.author?.id;
+              const isMyRepost = authorId === (user?._id || user?.id);
               return {
                 ...p,
                 original_post_id: { 
                   ...p.original_post_id, 
-                  reposts_count: serverRepostCount ?? (p.original_post_id.reposts_count || 0) + 1 
+                  reposts_count: serverRepostCount ?? (p.original_post_id.reposts_count || 0) + 1,
+                  is_reposted: isMyRepost ? true : p.original_post_id.is_reposted
                 }
               };
             }
@@ -206,15 +215,27 @@ export default function HomeScreen() {
 
     // 4. Repost update: sync reposts_count on the relevant post card
     if (lastEvent.type === 'repost_update') {
-      const { post_id, postId, id, reposts_count, count, repost_count } = lastEvent.data ?? {};
+      const { post_id, postId, id, reposts_count, count, repost_count, author_id, authorId: evAuthId } = lastEvent.data ?? {};
       const targetId = post_id ?? postId ?? id;
       const finalCount = reposts_count ?? count ?? repost_count;
+      const eventAuthorId = author_id ?? evAuthId;
 
       if (targetId) {
         setPosts((prev) =>
           prev.map((p) => {
-            if (p._id === targetId) return { ...p, reposts_count: finalCount ?? p.reposts_count };
+            // IGNORE if it's our own action and the count seems stale
+            const isMyAction = eventAuthorId === (user?._id || user?.id);
+            
+            if (p._id === targetId) {
+              if (isMyAction && finalCount !== undefined && finalCount < (p.reposts_count || 0)) {
+                return p;
+              }
+              return { ...p, reposts_count: finalCount ?? p.reposts_count };
+            }
             if (p.type === 'repost' && p.original_post_id?._id === targetId) {
+              if (isMyAction && finalCount !== undefined && finalCount < (p.original_post_id!.reposts_count || 0)) {
+                return p;
+              }
               return {
                 ...p,
                 original_post_id: { ...p.original_post_id!, reposts_count: finalCount ?? p.original_post_id!.reposts_count }
@@ -470,9 +491,13 @@ export default function HomeScreen() {
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <StatusBar style="light" backgroundColor={theme.tint} />
       {isLoading && !isRefreshing ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={theme.primary} />
-        </View>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View style={{ paddingTop: 10 }}>
+            {[1, 2, 3].map((i) => (
+              <PostCardSkeleton key={i} />
+            ))}
+          </View>
+        </ScrollView>
       ) : (
         <FlashList
           data={posts as any}

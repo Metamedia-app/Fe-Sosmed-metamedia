@@ -13,11 +13,13 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { BASE_URL } from '../utils/api';
@@ -309,26 +311,34 @@ export const CommentModal = ({
   }, [lastEvent, isVisible, expanded, postId, user?.id, user?._id]);
 
   // ── Send comment / reply ──────────────────────────────────────────────────
+  const isSubmittingRef = useRef(false);
   const handleSend = async () => {
-    if (!newComment.trim() || isSubmitting || !token) return;
-    setIsSubmitting(true);
-
+    if (!newComment.trim() || isSubmitting || isSubmittingRef.current || !token) return;
+    
+    isSubmittingRef.current = true;
+    const commentBody = newComment.trim();
     const parentId = replyingTo?.id ?? null;
     const topLevelId = replyingTo?.topLevelId ?? null;
-    setReplyingTo(null);
+    
+    // Optimistic UI updates
     setNewComment('');
+    setReplyingTo(null);
+    setIsSubmitting(true);
+    
+    // Keyboard stays open like in Room Chat! No Keyboard.dismiss() here.
 
     try {
       const res = await fetch(`${BASE_URL}/posts/${postId}/comments`, {
         method: 'POST',
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          body: newComment.trim(),
+          body: commentBody,
           ...(parentId ? { parent_id: parentId } : {}),
         }),
       });
 
       const result = await res.json();
+
       if (res.ok) {
         const rawCmt = result.data?.comment ?? result.data;
         if (!rawCmt?._id) return;
@@ -337,12 +347,9 @@ export const CommentModal = ({
         const newCmt: Comment = { ...rawCmt, createdAt: rawCmt.createdAt || rawCmt.created_at };
 
         if (!parentId) {
-          setComments(prev => {
-            if (prev.some(c => c._id === newCmt._id)) return prev;
-            setTimeout(() => scrollViewRef.current?.scrollTo({ y: 0, animated: true }), 100);
-            return [newCmt, ...prev];
-          });
+          setComments(prev => [newCmt, ...prev]);
           setTotalComments(p => p + 1);
+          setTimeout(() => scrollViewRef.current?.scrollTo({ y: 0, animated: true }), 100);
         } else {
           const threadId = topLevelId || parentId;
           setTotalComments(p => p + 1);
@@ -350,7 +357,6 @@ export const CommentModal = ({
 
           setReplies(prev => {
             const thread = prev[threadId] || [];
-            if (thread.some(r => r._id === newCmt._id)) return prev;
             const parentReply = thread.find(r => r._id === parentId);
             return {
               ...prev,
@@ -364,17 +370,18 @@ export const CommentModal = ({
           setExpanded(prev => ({ ...prev, [threadId]: true }));
         }
         
-        // Notify global sync
         broadcastPostStatsUpdate(postId, { comments_count: totalComments + 1 });
 
       } else {
         Alert.alert('Gagal', result.message || 'Gagal mengirim komentar');
+        setNewComment(commentBody);
       }
     } catch (err) {
-      console.error('handleSend error:', err);
+      console.error('Comment send error:', err);
+      setNewComment(commentBody);
     } finally {
       setIsSubmitting(false);
-      Keyboard.dismiss();
+      isSubmittingRef.current = false;
     }
   };
 
@@ -477,52 +484,95 @@ export const CommentModal = ({
   };
 
   return (
-    <Modal visible={isVisible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.modalContent, { backgroundColor: theme.card }]}>
-          <View style={[styles.header, { borderBottomColor: theme.border }]}>
-            <View style={styles.headerTitleRow}>
-              <MessageCircle size={20} color={theme.primary} /><Text style={[styles.headerTitle, { color: theme.text }]}>Komentar ({totalComments})</Text>
-            </View>
-            <TouchableOpacity onPress={onClose}><X size={24} color={theme.text} /></TouchableOpacity>
+    <Modal 
+      visible={isVisible} 
+      animationType="fade" 
+      transparent 
+      onRequestClose={onClose}
+      statusBarTranslucent={true}
+    >
+      <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.clickableOverlay} />
+        </TouchableWithoutFeedback>
+        <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
+          <View style={styles.dragHandleContainer}>
+            <View style={[styles.dragHandle, { backgroundColor: theme.border }]} />
           </View>
-          <View style={styles.listContainer}>
-            {isLoading ? <View style={styles.centerContainer}><ActivityIndicator size="large" color={theme.primary} /></View> : 
-             comments.length === 0 ? <View style={styles.centerContainer}><MessageCircle size={48} color={theme.border} /><Text style={[styles.emptyText, { color: theme.description }]}>Belum ada komentar.</Text></View> :
-             <ScrollView ref={scrollViewRef} contentContainerStyle={styles.listContent}>{comments.map(comment => <CommentItem key={comment._id} item={comment} />)}</ScrollView>}
-          </View>
-          <View style={[styles.inputContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
-            {replyingTo && (
-              <View style={[styles.replyBar, { backgroundColor: theme.background }]}>
-                <Text style={[styles.replyBarText, { color: theme.description }]}>Membalas <Text style={{ fontWeight: 'bold', color: theme.text }}>{replyingTo.name}</Text></Text>
-                <TouchableOpacity onPress={() => setReplyingTo(null)}><X size={16} color={theme.description} /></TouchableOpacity>
+          <ScrollView 
+            scrollEnabled={false} 
+            keyboardShouldPersistTaps="always"
+            contentContainerStyle={{ flex: 1 }}
+          >
+            <View style={[styles.header, { borderBottomColor: theme.border }]}>
+              <View style={styles.headerTitleRow}>
+                <MessageCircle size={20} color={theme.primary} /><Text style={[styles.headerTitle, { color: theme.text }]}>Komentar ({totalComments})</Text>
               </View>
-            )}
-            <View style={styles.inputArea}>
-              <TextInput
-                ref={inputRef}
-                style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
-                placeholder={replyingTo ? 'Tulis balasan...' : 'Tulis komentar...'}
-                placeholderTextColor={theme.description}
-                value={newComment}
-                onChangeText={setNewComment}
-                multiline
-              />
-              <TouchableOpacity style={[styles.sendButton, { backgroundColor: newComment.trim() ? theme.primary : theme.border }]} onPress={handleSend} disabled={!newComment.trim() || isSubmitting}>
-                {isSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Send size={18} color="#FFF" />}
-              </TouchableOpacity>
+              <TouchableOpacity onPress={onClose} style={styles.closeBtn}><X size={24} color={theme.text} /></TouchableOpacity>
             </View>
-          </View>
-        </KeyboardAvoidingView>
+            <View style={styles.listContainer}>
+              {isLoading ? <View style={styles.centerContainer}><ActivityIndicator size="large" color={theme.primary} /></View> : 
+               comments.length === 0 ? <View style={styles.centerContainer}><MessageCircle size={48} color={theme.border} /><Text style={[styles.emptyText, { color: theme.description }]}>Belum ada komentar.</Text></View> :
+                <ScrollView 
+                  ref={scrollViewRef} 
+                  contentContainerStyle={styles.listContent}
+                  keyboardShouldPersistTaps="always"
+                >
+                  {comments.map(comment => <CommentItem key={comment._id} item={comment} />)}
+                </ScrollView>}
+            </View>
+            <View style={[styles.inputContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
+              {replyingTo && (
+                <View style={[styles.replyBar, { backgroundColor: theme.background }]}>
+                  <Text style={[styles.replyBarText, { color: theme.description }]}>Membalas <Text style={{ fontWeight: 'bold', color: theme.text }}>{replyingTo.name}</Text></Text>
+                  <TouchableOpacity onPress={() => setReplyingTo(null)}><X size={16} color={theme.description} /></TouchableOpacity>
+                </View>
+              )}
+              <View style={styles.inputArea}>
+                <TextInput
+                  ref={inputRef}
+                  style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
+                  placeholder={replyingTo ? 'Tulis balasan...' : 'Tulis komentar...'}
+                  placeholderTextColor={theme.description}
+                  value={newComment}
+                  onChangeText={setNewComment}
+                  multiline
+                  onSubmitEditing={handleSend}
+                  blurOnSubmit={false}
+                />
+                <Pressable 
+                  style={({ pressed }) => [
+                    styles.sendButton, 
+                    { 
+                      backgroundColor: newComment.trim() ? theme.primary : theme.border,
+                      opacity: pressed ? 0.7 : 1,
+                      zIndex: 999,
+                      elevation: 5
+                    }
+                  ]} 
+                  onPressIn={handleSend}
+                  disabled={!newComment.trim() || isSubmitting}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                >
+                  {isSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Send size={18} color="#FFF" />}
+                </Pressable>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
       </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { height: '80%', borderTopLeftRadius: 25, borderTopRightRadius: 25, overflow: 'hidden' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 18, borderBottomWidth: 1 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  clickableOverlay: { ...StyleSheet.absoluteFillObject },
+  modalContent: { height: '70%', borderTopLeftRadius: 30, borderTopRightRadius: 30, overflow: 'hidden' },
+  dragHandleContainer: { alignItems: 'center', paddingVertical: 12 },
+  dragHandle: { width: 40, height: 5, borderRadius: 2.5 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1 },
+  closeBtn: { padding: 4 },
   headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerTitle: { fontSize: 17, fontWeight: 'bold' },
   listContainer: { flex: 1 },

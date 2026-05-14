@@ -101,11 +101,6 @@ export default function ChatRoomScreen() {
           update: { type: LayoutAnimation.Types.easeInEaseOut },
         });
         setKeyboardHeight(0);
-        setTimeout(() => {
-          inputAreaRef.current?.measureInWindow((x, y, width, height) => {
-            console.log('🔄🔄🔄 [FINAL RESET INBOX] Input Area Pos:', { x, y, width, height });
-          });
-        }, 150);
       }
     );
 
@@ -116,13 +111,7 @@ export default function ChatRoomScreen() {
   }, []);
 
   useEffect(() => {
-    // Manual initial position measurement
-    const timer = setTimeout(() => {
-      inputAreaRef.current?.measureInWindow((x, y, width, height) => {
-        console.log('🚀🚀🚀 [INITIAL MOUNT INBOX] Input Area Pos:', { x, y, width, height });
-      });
-    }, 1000);
-    return () => clearTimeout(timer);
+    // Initial mount logic
   }, []);
 
   useEffect(() => {
@@ -132,15 +121,10 @@ export default function ChatRoomScreen() {
     markAsRead(id as string, token as string);
 
     const handleNewMessage = (data: any) => {
-      console.log(`[ChatRoom Debug] Direct Socket new_message:`, data.body);
       if (data.conversation_id === id) {
-        // Also mark as read when a new message arrives and we are in the room
-        markAsRead(id as string, token as string);
-        
         setMessages(prev => {
           const exists = prev.findIndex(m => m._id === data._id) !== -1;
           if (exists) return prev;
-          console.log('[ChatRoom Debug] Adding message to state via direct listener');
           return [data, ...prev];
         });
       }
@@ -450,21 +434,15 @@ export default function ChatRoomScreen() {
           </View>
 
           {/* Messages */}
-          {isLoading ? (
-            <View style={styles.centerContainer}>
-              <ActivityIndicator size="large" color={theme.tint} />
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={messages}
-              keyExtractor={(item, index) => item._id || index.toString()}
-              renderItem={renderMessage}
-              inverted
-              contentContainerStyle={styles.messagesList}
-              showsVerticalScrollIndicator={false}
-            />
-          )}
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item, index) => item._id || index.toString()}
+            renderItem={renderMessage}
+            inverted
+            contentContainerStyle={styles.messagesList}
+            showsVerticalScrollIndicator={false}
+          />
         </View>
 
         {/* Selected Image Preview */}

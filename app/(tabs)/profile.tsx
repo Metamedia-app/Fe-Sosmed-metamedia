@@ -1,5 +1,6 @@
 import EditProfileModal from '@/components/EditProfileModal';
 import { PostCard, PostData } from '@/components/PostCard';
+import { PostCardSkeleton } from '@/components/PostCardSkeleton';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
@@ -79,16 +80,24 @@ export default function ProfileScreen() {
         const isMatch = p._id === post_id || (p.type === 'repost' && p.original_post_id?._id === post_id);
         if (!isMatch) return p;
         
+        // IGNORE if it's our own action and the count seems stale
+        const eventAuthorId = lastEvent.data?.author_id ?? lastEvent.data?.authorId;
+        const isMyAction = eventAuthorId === (user?._id || user?.id);
+        
+        const finalLikes = likes_count ?? p.likes_count;
+        const finalReposts = (isMyAction && reposts_count !== undefined && reposts_count < (p.reposts_count || 0)) ? p.reposts_count : (reposts_count ?? p.reposts_count);
+        const finalShares = shares_count ?? p.shares_count;
+
         return {
           ...p,
-          likes_count: likes_count ?? p.likes_count,
-          reposts_count: reposts_count ?? p.reposts_count,
-          shares_count: shares_count ?? p.shares_count,
+          likes_count: finalLikes,
+          reposts_count: finalReposts,
+          shares_count: finalShares,
           original_post_id: p.type === 'repost' && p.original_post_id ? {
             ...p.original_post_id,
-            likes_count: likes_count ?? p.original_post_id.likes_count,
-            reposts_count: reposts_count ?? p.original_post_id.reposts_count,
-            shares_count: shares_count ?? p.original_post_id.shares_count,
+            likes_count: finalLikes,
+            reposts_count: finalReposts,
+            shares_count: finalShares,
           } : p.original_post_id
         };
       });
@@ -176,7 +185,7 @@ export default function ProfileScreen() {
 
       const postsData = await postsRes.json();
       const repostsData = await repostsRes.json();
-
+      
       if (postsRes.ok) {
         setPosts(postsData.data?.posts?.filter((p: any) => 
           (p.author?._id || p.author?.id) === user?._id && p.type === 'original'
@@ -364,9 +373,20 @@ export default function ProfileScreen() {
 
   if (isLoadingInitially) {
     return (
-      <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
-        <ActivityIndicator size="large" color={theme.tint} />
-        <Text style={[styles.loadingText, { color: theme.description }]}>Memuat data mahasiswa...</Text>
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <View style={{ paddingTop: 60, paddingHorizontal: 15 }}>
+          {/* Mock profile header skeleton */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 30 }}>
+            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: theme.dark ? '#333' : '#E1E9EE', marginRight: 15 }} />
+            <View>
+              <View style={{ width: 150, height: 20, borderRadius: 4, backgroundColor: theme.dark ? '#333' : '#E1E9EE', marginBottom: 10 }} />
+              <View style={{ width: 100, height: 14, borderRadius: 4, backgroundColor: theme.dark ? '#333' : '#E1E9EE' }} />
+            </View>
+          </View>
+          {[1, 2, 3].map((i) => (
+            <PostCardSkeleton key={i} />
+          ))}
+        </View>
       </View>
     );
   }
@@ -552,8 +572,10 @@ export default function ProfileScreen() {
         
         {/* Posts/Reposts List */}
         {isPostsLoading ? (
-          <View style={{ padding: 40, alignItems: 'center' }}>
-            <ActivityIndicator color={theme.tint} />
+          <View style={{ paddingTop: 10 }}>
+            {[1, 2].map((i) => (
+              <PostCardSkeleton key={i} />
+            ))}
           </View>
         ) : (
           <View style={styles.listContainer}>
