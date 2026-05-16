@@ -9,7 +9,7 @@ import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { Plus, RefreshCcw } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, DeviceEventEmitter } from 'react-native';
 import { Story, storyService } from '@/utils/story';
 import CreateStoryModal from '@/components/CreateStoryModal';
 import StoryViewer from '@/components/StoryViewer';
@@ -18,6 +18,7 @@ import { subscribeToCommentSync } from '@/utils/commentSyncStore';
 import { BASE_URL } from '@/utils/api';
 import { scale, verticalScale, moderateScale } from '@/utils/responsive';
 import { PostCardSkeleton } from '@/components/PostCardSkeleton';
+import { logScreenView, logEvent } from '@/utils/analytics';
 
 // No dummy stories needed
 
@@ -33,6 +34,7 @@ export default function HomeScreen() {
   const [isLoadingStories, setIsLoadingStories] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const flashListRef = React.useRef<any>(null);
 
   // Modal States
   const [isCreateStoryVisible, setIsCreateStoryVisible] = useState(false);
@@ -65,6 +67,8 @@ export default function HomeScreen() {
     if (isRefresh) {
       setIsRefreshing(true);
       fetchStories();
+      // CATAT ANALYTICS: Saat mahasiswa menarik feed ke bawah (Refresh)
+      logEvent('refresh_feed', { screen: 'Halaman_Beranda' });
     } else {
       setIsLoading(true);
     }
@@ -99,6 +103,9 @@ export default function HomeScreen() {
   useEffect(() => {
     fetchStories();
     fetchPosts();
+    
+    // CATAT ANALYTICS: Saat mahasiswa membuka Beranda
+    logScreenView('Halaman_Beranda');
   }, [refreshSignal, token, fetchPosts, fetchStories]);
 
   // Listen for global refresh signal from CreatePostModal
@@ -107,6 +114,21 @@ export default function HomeScreen() {
       fetchPosts(true);
     }
   }, [refreshSignal]);
+
+  // Listen for tab press to refresh
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('homeTabPressToRefresh', () => {
+      // Scroll to top first, then refresh
+      if (flashListRef.current) {
+        flashListRef.current.scrollToOffset({ offset: 0, animated: true });
+      }
+      fetchPosts(true);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [fetchPosts]);
 
   // Listen for socket events — keep feed live without full reload
   useEffect(() => {
@@ -500,6 +522,7 @@ export default function HomeScreen() {
         </ScrollView>
       ) : (
         <FlashList
+          ref={flashListRef}
           data={posts as any}
           renderItem={({ item }: any) => (
             <PostCard 

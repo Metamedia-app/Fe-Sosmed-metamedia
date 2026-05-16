@@ -6,7 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Redirect, Tabs, useRouter } from 'expo-router';
 import { Bell, Home, MessageSquare, Search, SquarePlus, User, Menu } from 'lucide-react-native';
 import React from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View, DeviceEventEmitter } from 'react-native';
 import CreatePostModal from '@/components/CreatePostModal';
 import { useState } from 'react';
 
@@ -132,6 +132,12 @@ export default function TabLayout() {
             title: 'Metamedia',
             tabBarLabel: 'Beranda',
             tabBarIcon: ({ color, size }) => <Home size={size} color={color} />,
+          }}
+          listeners={{
+            tabPress: (e) => {
+              // Kirim sinyal agar halaman index bisa merefresh atau scroll ke atas
+              DeviceEventEmitter.emit('homeTabPressToRefresh');
+            },
           }}
         />
         <Tabs.Screen

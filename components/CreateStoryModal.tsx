@@ -20,6 +20,7 @@ import {
     Alert
 } from 'react-native';
 import { storyService } from '@/utils/story';
+import { logEvent } from '../utils/analytics';
 
 interface CreateStoryModalProps {
   isVisible: boolean;
@@ -108,6 +109,10 @@ export default function CreateStoryModal({ isVisible, onClose, onSuccess }: Crea
 
       if (result.success) {
         Alert.alert('Berhasil', 'Cerita kamu sudah terbit! ✨');
+        
+        // CATAT ANALYTICS: Saat Story berhasil diunggah
+        logEvent('create_story', { media_type: selectedMedia.type, has_text: content.length > 0 });
+        
         setContent('');
         setSelectedMedia(null);
         if (onSuccess) onSuccess();

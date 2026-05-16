@@ -53,7 +53,8 @@
       ],
       "expo-video",
       "@react-native-community/datetimepicker",
-      "expo-notifications"
+      "expo-notifications",
+      "@react-native-firebase/app"
     ],
     "experiments": {
       "typedRoutes": true,

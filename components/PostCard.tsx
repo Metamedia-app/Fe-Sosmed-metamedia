@@ -24,6 +24,7 @@ import { BASE_URL } from '../utils/api';
 import { getAvatarUrl } from '../utils/avatar';
 import { notifyPostCommentsUpdated, recursiveReplyCounts, syncRecursiveCount } from '../utils/commentSyncStore';
 import { deletePost } from '../utils/post';
+import { logEvent } from '../utils/analytics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -441,9 +442,11 @@ export const PostCard = ({
     if (isLiked) {
       setLikeCount(prev => prev - 1);
       setIsLiked(false);
+      logEvent('click_unlike', { post_id: post._id });
     } else {
       setLikeCount(prev => prev + 1);
       setIsLiked(true);
+      logEvent('click_like', { post_id: post._id });
       scale.value = withSequence(
         withSpring(1.5, { damping: 10, stiffness: 100 }),
         withSpring(1, { damping: 10, stiffness: 100 })
@@ -493,9 +496,11 @@ export const PostCard = ({
     if (isReposted) {
       setRepostsCount(prev => Math.max(0, prev - 1));
       setIsReposted(false);
+      logEvent('click_unrepost', { post_id: targetId });
     } else {
       setRepostsCount(prev => prev + 1);
       setIsReposted(true);
+      logEvent('click_repost', { post_id: targetId });
     }
 
     try {
@@ -539,6 +544,9 @@ export const PostCard = ({
   const handleShareSuccess = async () => {
     const prevCount = sharesCount;
     setSharesCount(prev => prev + 1);
+    
+    // CATAT ANALYTICS: Saat pengguna membagikan post
+    logEvent('share_post', { post_id: post._id });
 
     try {
       const res = await fetch(`${BASE_URL}/posts/${post._id}/share`, {

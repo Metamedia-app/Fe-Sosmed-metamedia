@@ -26,6 +26,7 @@ import {
 import { updatePost } from '@/utils/post';
 import { PostData } from './PostCard';
 import SecureMedia from './SecureMedia';
+import { logEvent } from '../utils/analytics';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -123,6 +124,7 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
         const res = await updatePost(postToEdit._id, { caption: content }, token || '');
         if (res.success) {
           Alert.alert('Berhasil', 'Postingan kamu sudah diperbarui!');
+          logEvent('edit_post', { post_id: postToEdit._id });
           handleClose();
           if (onSuccess) onSuccess();
           triggerRefresh();
@@ -150,6 +152,7 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
 
         if (response.ok) {
           Alert.alert('Berhasil', 'Postingan kamu sudah terbit! 🚀');
+          logEvent('create_post', { has_media: selectedMedia.length > 0 });
           triggerRefresh();
           handleClose();
           setContent('');

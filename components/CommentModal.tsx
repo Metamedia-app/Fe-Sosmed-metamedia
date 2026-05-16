@@ -25,6 +25,7 @@ import {
 import { BASE_URL } from '../utils/api';
 import { getAvatarUrl } from '../utils/avatar';
 import { recursiveReplyCounts, postCommentsCache, broadcastPostStatsUpdate } from '../utils/commentSyncStore';
+import { logEvent } from '../utils/analytics';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -369,6 +370,9 @@ export const CommentModal = ({
           );
           setExpanded(prev => ({ ...prev, [threadId]: true }));
         }
+        
+        // CATAT ANALYTICS: Saat komentar atau balasan berhasil dikirim
+        logEvent('create_comment', { post_id: postId, is_reply: !!parentId });
         
         broadcastPostStatsUpdate(postId, { comments_count: totalComments + 1 });
 
