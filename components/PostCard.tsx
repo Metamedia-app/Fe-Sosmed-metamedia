@@ -427,6 +427,7 @@ export const PostCard = ({
   };
 
   const scale = useSharedValue(1);
+  const isLikingRef = React.useRef(false);
 
   const animatedStyle = useAnimatedStyle(() => {
     return {
@@ -435,6 +436,9 @@ export const PostCard = ({
   });
 
   const handleLike = async () => {
+    if (isLikingRef.current) return; // Mencegah spam klik (Debounce)
+    isLikingRef.current = true;
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const prevLiked = isLiked;
     const prevCount = likeCount;
@@ -466,6 +470,10 @@ export const PostCard = ({
     } catch (e) {
       setIsLiked(prevLiked);
       setLikeCount(prevCount);
+    } finally {
+      setTimeout(() => {
+        isLikingRef.current = false; // Buka kunci setelah 700ms
+      }, 700);
     }
   };
 

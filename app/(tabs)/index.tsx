@@ -44,6 +44,19 @@ export default function HomeScreen() {
   const [initialStoryIndex, setInitialStoryIndex] = useState(0);
   const [activeStoryIdForViewers, setActiveStoryIdForViewers] = useState<string | null>(null);
   
+  // --- TELEMETRI PERFORMA SKRIPSI ---
+  const mountTimeMs = React.useRef(performance.now());
+  const hasLoggedFCP = React.useRef(false);
+  const hasLoggedInitialTTI = React.useRef(false);
+
+  useEffect(() => {
+    if (!hasLoggedFCP.current) {
+      const fcp = performance.now() - mountTimeMs.current;
+      console.log(`⏱️ [SKRIPSI - FCP] Waktu Render Kerangka (Skeleton): ${fcp.toFixed(2)} ms`);
+      hasLoggedFCP.current = true;
+    }
+  }, []);
+  
   // Anti-duplicate & Anti-stale event tracker
   const lastProcessedEventTime = React.useRef<number>(0);
   const mountTime = React.useRef<number>(Date.now());
@@ -64,6 +77,7 @@ export default function HomeScreen() {
   }, [token]);
 
   const fetchPosts = useCallback(async (isRefresh = false) => {
+    const fetchStartTime = performance.now();
     if (isRefresh) {
       setIsRefreshing(true);
       fetchStories();
@@ -82,18 +96,42 @@ export default function HomeScreen() {
           'Authorization': `Bearer ${token}`,
         },
       });
+      const fetchEndTime = performance.now(); // Berhenti mencatat waktu murni jaringan
 
       const result = await response.json();
 
       if (response.ok) {
         const fetchedPosts = (result.data?.posts || []).filter((p: any) => p.type !== 'repost');
         setPosts(fetchedPosts);
+
+        // --- TELEMETRI PERFORMA SKRIPSI ---
+        setTimeout(() => {
+          const renderEndTime = performance.now();
+          const pureFetchTime = fetchEndTime - fetchStartTime;
+          const uiRenderTime = renderEndTime - fetchEndTime;
+
+          if (!hasLoggedInitialTTI.current) {
+            const initialTti = renderEndTime - mountTimeMs.current;
+            console.log(`⏱️ [SKRIPSI - FETCH] Jaringan API Murni: ${pureFetchTime.toFixed(2)} ms`);
+            console.log(`⏱️ [SKRIPSI - TTI AWAL] Total Waktu Aplikasi Buka s/d Siap Pakai: ${initialTti.toFixed(2)} ms`);
+            hasLoggedInitialTTI.current = true;
+          } else if (isRefresh) {
+            const totalRefreshTime = renderEndTime - fetchStartTime;
+            console.log(`⏱️ [SKRIPSI - REFRESH] Waktu Jaringan (Fetch API): ${pureFetchTime.toFixed(2)} ms`);
+            console.log(`⏱️ [SKRIPSI - REFRESH] Waktu React Menggambar UI (Render): ${uiRenderTime.toFixed(2)} ms`);
+            console.log(`⏱️ [SKRIPSI - REFRESH] Waktu Refresh Total: ${totalRefreshTime.toFixed(2)} ms`);
+          }
+          console.log('----------------------------------------------------');
+        }, 0);
       } else {
         setError(result.message || 'Gagal mengambil postingan');
       }
     } catch (err) {
       console.error('Fetch posts error:', err);
       setError('Kesalahan koneksi internet');
+      if (isRefresh) {
+        Alert.alert('Koneksi Terputus', 'Tidak ada jaringan internet. Menampilkan data terakhir yang disimpan.');
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

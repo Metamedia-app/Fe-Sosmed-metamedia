@@ -186,11 +186,22 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
       selectionLimit: 5,
     });
     if (!result.canceled) {
-      const newMedia: SelectedMedia[] = result.assets.map(asset => ({
-        uri: asset.uri,
-        type: asset.type === 'video' ? 'video' : 'image'
-      }));
-      setSelectedMedia([...selectedMedia, ...newMedia]);
+      const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+      const validAssets = result.assets.filter(asset => {
+        return !asset.fileSize || asset.fileSize <= MAX_SIZE;
+      });
+
+      if (validAssets.length !== result.assets.length) {
+        Alert.alert('Gagal', 'Beberapa ukuran media terlalu besar (Maksimal 10 MB). File tersebut diabaikan.');
+      }
+
+      if (validAssets.length > 0) {
+        const newMedia: SelectedMedia[] = validAssets.map(asset => ({
+          uri: asset.uri,
+          type: asset.type === 'video' ? 'video' : 'image'
+        }));
+        setSelectedMedia([...selectedMedia, ...newMedia]);
+      }
     }
   };
 
