@@ -10,7 +10,7 @@ import {
   Alert,
   Animated,
   Keyboard,
-  KeyboardAvoidingView,
+  KeyboardEvent,
   Modal,
   Platform,
   Pressable,
@@ -21,6 +21,7 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
+  KeyboardAvoidingView
 } from 'react-native';
 import { BASE_URL } from '../utils/api';
 import { getAvatarUrl } from '../utils/avatar';
@@ -99,6 +100,8 @@ export const CommentModal = ({
 
   const processedIds = useRef<Set<string>>(new Set());
   const authHeaders = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+  // Mengandalkan native KeyboardAvoidingView dan adjustResize Android
 
   // ── Propagate count changes ───────────────────────────────────────────────
   useEffect(() => { onCountChange?.(totalComments); }, [totalComments]);
@@ -389,6 +392,68 @@ export const CommentModal = ({
     }
   };
 
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardWillShow', (e: KeyboardEvent) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener('keyboardWillHide', () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  const handleDeleteComment = (commentId: string, parentId?: string | null) => {
+    Alert.alert(
+      'Hapus Komentar',
+      'Apakah Anda yakin ingin menghapus komentar ini?',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await fetch(`${BASE_URL}/posts/${postId}/comments/${commentId}`, {
+                method: 'DELETE',
+                headers: authHeaders,
+              });
+              const result = await res.json();
+              if (res.ok && result.success) {
+                if (!parentId) {
+                  setComments(prev => prev.filter(c => c._id !== commentId));
+                  setTotalComments(p => Math.max(0, p - 1));
+                  broadcastPostStatsUpdate(postId, { comments_count: Math.max(0, totalComments - 1) });
+                } else {
+                  setReplies(prev => {
+                    const thread = prev[parentId] || [];
+                    return { ...prev, [parentId]: thread.filter(r => r._id !== commentId) };
+                  });
+                  setRepliesCount(prev => ({
+                    ...prev,
+                    [parentId]: Math.max(0, (prev[parentId] || 0) - 1)
+                  }));
+                  setComments(prev => prev.map(c => 
+                    c._id === parentId ? { ...c, replies_count: Math.max(0, c.replies_count - 1) } : c
+                  ));
+                  setTotalComments(p => Math.max(0, p - 1));
+                  broadcastPostStatsUpdate(postId, { comments_count: Math.max(0, totalComments - 1) });
+                }
+              } else {
+                Alert.alert('Gagal', result.message || 'Gagal menghapus komentar');
+              }
+            } catch (err) {
+              console.error('Delete comment error:', err);
+              Alert.alert('Gagal', 'Terjadi kesalahan jaringan saat menghapus komentar');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const formatDate = (dateStr: string) => {
     if (!dateStr) return '';
     try {
@@ -407,29 +472,41 @@ export const CommentModal = ({
     return (
       <Animated.View style={styles.replyItem}>
         <View style={styles.threadLine} />
-        <Image source={{ uri: avatar }} style={styles.replyAvatar} />
-        <View style={styles.commentContent}>
-          <View style={styles.commentHeader}>
-            <View style={styles.authorRow}>
-              <Text style={[styles.commentAuthor, { color: theme.text }]}>{item.author?.nama || 'Anonim'}</Text>
-              {item.parentAuthorName && (
-                <>
-                  <Text style={[styles.replyArrow, { color: theme.primary }]}>›</Text>
-                  <Text style={[styles.replyTarget, { color: theme.description }]}>{item.parentAuthorName}</Text>
-                </>
-              )}
+        <TouchableOpacity 
+          style={{ flexDirection: 'row', flex: 1 }}
+          activeOpacity={0.8}
+          onLongPress={() => {
+            const authorId = item.author?._id || (item.author as any)?.id;
+            const currentUserId = user?._id || user?.id;
+            if (authorId && currentUserId && authorId === currentUserId) {
+              handleDeleteComment(item._id, topLevelId);
+            }
+          }}
+        >
+          <Image source={{ uri: avatar }} style={styles.replyAvatar} />
+          <View style={styles.commentContent}>
+            <View style={styles.commentHeader}>
+              <View style={styles.authorRow}>
+                <Text style={[styles.commentAuthor, { color: theme.text }]}>{item.author?.nama || 'Anonim'}</Text>
+                {item.parentAuthorName && (
+                  <>
+                    <Text style={[styles.replyArrow, { color: theme.primary }]}>›</Text>
+                    <Text style={[styles.replyTarget, { color: theme.description }]}>{item.parentAuthorName}</Text>
+                  </>
+                )}
+              </View>
+              <Text style={[styles.commentDate, { color: theme.description }]}>{formatDate(item.createdAt)}</Text>
             </View>
-            <Text style={[styles.commentDate, { color: theme.description }]}>{formatDate(item.createdAt)}</Text>
+            <Text style={[styles.commentText, { color: theme.text }]}>{item.body}</Text>
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => setReplyingTo({ id: item._id, name: item.author?.nama || 'Anonim', topLevelId })}
+              disabled={isSubmitting}
+            >
+              <Text style={[styles.actionBtnText, { color: theme.primary }]}>Balas</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={[styles.commentText, { color: theme.text }]}>{item.body}</Text>
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => setReplyingTo({ id: item._id, name: item.author?.nama || 'Anonim', topLevelId })}
-            disabled={isSubmitting}
-          >
-            <Text style={[styles.actionBtnText, { color: theme.primary }]}>Balas</Text>
-          </TouchableOpacity>
-        </View>
+        </TouchableOpacity>
       </Animated.View>
     );
   };
@@ -451,7 +528,17 @@ export const CommentModal = ({
         style={[styles.commentBlock, isHighlighted && { backgroundColor: highlightBg, borderRadius: 12, padding: 8 }]}
         onLayout={(e) => { itemLayouts.current[item._id] = e.nativeEvent.layout.y; }}
       >
-        <View style={styles.commentItem}>
+        <TouchableOpacity 
+          style={styles.commentItem}
+          activeOpacity={0.8}
+          onLongPress={() => {
+            const authorId = item.author?._id || (item.author as any)?.id;
+            const currentUserId = user?._id || user?.id;
+            if (authorId && currentUserId && authorId === currentUserId) {
+              handleDeleteComment(item._id, null);
+            }
+          }}
+        >
           <Image source={{ uri: avatar }} style={styles.commentAvatar} />
           <View style={styles.commentContent}>
             <View style={styles.commentHeader}>
@@ -481,7 +568,7 @@ export const CommentModal = ({
               )}
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
         {isExpanded && replyList.map(reply => <ReplyItem key={reply._id} item={reply} topLevelId={item._id} />)}
       </Animated.View>
     );
@@ -490,12 +577,16 @@ export const CommentModal = ({
   return (
     <Modal 
       visible={isVisible} 
-      animationType="fade" 
+      animationType="slide" 
       transparent 
       onRequestClose={onClose}
       statusBarTranslucent={true}
     >
-      <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
+      <KeyboardAvoidingView 
+        behavior="padding" 
+        style={{ flex: 1 }}
+      >
+        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
         <TouchableWithoutFeedback onPress={onClose}>
           <View style={styles.clickableOverlay} />
         </TouchableWithoutFeedback>
@@ -565,6 +656,7 @@ export const CommentModal = ({
           </ScrollView>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };

@@ -68,20 +68,20 @@ export default function LoginScreen() {
         if (userData._id && !userData.id) userData.id = userData._id;
         if (userData.id && !userData._id) userData._id = userData.id;
 
-        // --- PUSH NOTIFICATION INTEGRATION ---
-        let fcmToken = undefined;
-        try {
-          fcmToken = await registerForPushNotificationsAsync();
+        // --- PUSH NOTIFICATION INTEGRATION (Non-Blocking) ---
+        registerForPushNotificationsAsync().then(async (fcmToken) => {
           if (fcmToken && token) {
             await pushNotificationService.saveToken(token, fcmToken);
+            // Optionally update local storage with fcmToken in the background
+            AsyncStorage.setItem('@auth_fcmToken', fcmToken).catch(console.error);
           }
-        } catch (pushError) {
+        }).catch((pushError) => {
           console.error('Failed to setup push notifications:', pushError);
-        }
+        });
         // -------------------------------------
 
-        login(token || 'dummy-token', userData, fcmToken);
-        router.replace('/(tabs)');
+        await login(token || 'dummy-token', userData, undefined);
+        router.replace('/');
       } else {
         if (response.status === 401) {
           setErrorMessage(result.message || 'NIM NIDN atau password salah.');
@@ -108,7 +108,7 @@ export default function LoginScreen() {
     try {
       const response = await loginWithGoogle();
       if (response.success) {
-        router.replace('/(tabs)');
+        router.replace('/');
       } else {
         setErrorMessage(response.message || 'Gagal login dengan Google');
       }

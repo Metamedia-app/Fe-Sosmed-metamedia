@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { loadGoogleScript, loginRequestWeb } from '@/utils/googleAuth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type User = {
   id: string;
@@ -25,6 +26,7 @@ type User = {
 
 type AuthContextType = {
   isLoggedIn: boolean;
+  isLoadingAuth: boolean;
   token: string | null;
   user: User | null;
   refreshSignal: number;
@@ -45,6 +47,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [fcmToken, setFcmToken] = useState<string | null>(null);
@@ -81,7 +84,74 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = (newToken: string, userData: User, newFcmToken?: string) => {
+  // Load Auth State from AsyncStorage on Mount
+  useEffect(() => {
+    const loadStoredAuth = async () => {
+      try {
+        const storedToken = await AsyncStorage.getItem('@auth_token');
+        const storedUser = await AsyncStorage.getItem('@auth_user');
+        const storedFcmToken = await AsyncStorage.getItem('@auth_fcmToken');
+        
+        if (storedToken && storedUser) {
+          setToken(storedToken);
+          setUser(JSON.parse(storedUser));
+          if (storedFcmToken) setFcmToken(storedFcmToken);
+          setIsLoggedIn(true);
+        }
+      } catch (error) {
+        console.error('Failed to load auth state', error);
+      } finally {
+        setIsLoadingAuth(false);
+      }
+    };
+    loadStoredAuth();
+  }, []);
+
+  // [FORCE LOGOUT / BANNED] HTTP 403 Interceptor
+  useEffect(() => {
+    const originalFetch = global.fetch;
+    global.fetch = async function (...args) {
+      try {
+        const response = await originalFetch.apply(this, args);
+        if (response.status === 403) {
+          console.warn("[Force Logout] Banned! API mengembalikan status 403 Forbidden.");
+          
+          // If we have an FCM token and auth token, try to delete it from server first
+          if (token && fcmToken) {
+            try {
+              const { pushNotificationService } = require('@/utils/pushNotification');
+              await pushNotificationService.deleteToken(token, fcmToken);
+            } catch (e) {}
+          }
+          
+          try {
+            await AsyncStorage.multiRemove(['@auth_token', '@auth_user', '@auth_fcmToken']);
+          } catch (e) {}
+          
+          setToken(null);
+          setUser(null);
+          setFcmToken(null);
+          setIsLoggedIn(false);
+        }
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    };
+    return () => {
+      global.fetch = originalFetch;
+    };
+  }, [token, fcmToken]);
+
+  const login = async (newToken: string, userData: User, newFcmToken?: string) => {
+    try {
+      await AsyncStorage.setItem('@auth_token', newToken);
+      await AsyncStorage.setItem('@auth_user', JSON.stringify(userData));
+      if (newFcmToken) await AsyncStorage.setItem('@auth_fcmToken', newFcmToken);
+    } catch (error) {
+      console.error('Failed to save auth state', error);
+    }
+    
     setToken(newToken);
     setUser(userData);
     if (newFcmToken) setFcmToken(newFcmToken);
@@ -99,6 +169,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     
+    try {
+      await AsyncStorage.multiRemove(['@auth_token', '@auth_user', '@auth_fcmToken']);
+    } catch (error) {
+      console.error('Failed to remove auth state', error);
+    }
+    
     setToken(null);
     setUser(null);
     setFcmToken(null);
@@ -110,7 +186,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const updateUserData = (newData: Partial<User>) => {
-    setUser(prev => prev ? { ...prev, ...newData } : null);
+    setUser(prev => {
+      const updated = prev ? { ...prev, ...newData } : null;
+      if (updated) AsyncStorage.setItem('@auth_user', JSON.stringify(updated)).catch(console.error);
+      return updated;
+    });
   };
 
   const refreshProfile = async () => {
@@ -133,7 +213,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!userData.nama && userData.name) userData.nama = userData.name;
         if (!userData.avatar_url && userData.picture) userData.avatar_url = userData.picture;
         
-        setUser(prev => prev ? { ...prev, ...userData } : userData);
+        setUser(prev => {
+          const updated = prev ? { ...prev, ...userData } : userData;
+          AsyncStorage.setItem('@auth_user', JSON.stringify(updated)).catch(console.error);
+          return updated;
+        });
       }
     } catch (error) {
       console.error('Failed to refresh profile:', error);
@@ -159,7 +243,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Ensure id compatibility
         if (userData._id && !userData.id) userData.id = userData._id;
         if (userData.id && !userData._id) userData._id = userData.id;
-        setUser(prev => prev ? { ...prev, ...userData } : userData);
+        setUser(prev => {
+          const updated = prev ? { ...prev, ...userData } : userData;
+          AsyncStorage.setItem('@auth_user', JSON.stringify(updated)).catch(console.error);
+          return updated;
+        });
         return { success: true };
       } else {
         return { success: false, message: result.message || 'Gagal memperbarui profil' };
@@ -192,7 +280,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const newAvatarUrl = result.data?.avatar_url;
         if (newAvatarUrl) {
-          setUser(prev => prev ? { ...prev, avatar_url: newAvatarUrl } : null);
+          setUser(prev => {
+            const updated = prev ? { ...prev, avatar_url: newAvatarUrl } : null;
+            if (updated) AsyncStorage.setItem('@auth_user', JSON.stringify(updated)).catch(console.error);
+            return updated;
+          });
         } else {
           await refreshProfile(); // Fallback if avatar_url is missing in response
         }
@@ -219,7 +311,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const result = await response.json();
       if (response.ok) {
-        setUser(prev => prev ? { ...prev, avatar_url: undefined } : null);
+        setUser(prev => {
+          const updated = prev ? { ...prev, avatar_url: undefined } : null;
+          if (updated) AsyncStorage.setItem('@auth_user', JSON.stringify(updated)).catch(console.error);
+          return updated;
+        });
         return { success: true };
       } else {
         return { success: false, message: result.message || 'Gagal menghapus foto profil' };
@@ -394,7 +490,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         // -------------------------------------
 
-        login(newToken, userData, fcmTokenResult);
+        await login(newToken, userData, fcmTokenResult);
         return { success: true };
       } else {
         return { success: false, message: result.message || 'Gagal login via Google' };
@@ -410,6 +506,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{ 
       isLoggedIn, 
+      isLoadingAuth,
       token, 
       user, 
       refreshSignal, 

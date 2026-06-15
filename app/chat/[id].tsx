@@ -413,19 +413,36 @@ export default function ChatRoomScreen() {
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
               <ArrowLeft size={24} color={theme.text} />
             </TouchableOpacity>
-            {recipientAvatar && recipientAvatar !== 'undefined' ? (
-              <Image source={{ uri: recipientAvatar as string }} style={styles.headerAvatar} />
-            ) : (
-              <View style={styles.headerAvatarPlaceholder}>
-                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{recipientName ? recipientName.charAt(0).toUpperCase() : 'C'}</Text>
+            <TouchableOpacity 
+              style={{ flexDirection: 'row', flex: 1, alignItems: 'center' }}
+              activeOpacity={0.7}
+              onPress={() => {
+                if (recipientId) {
+                  router.push({
+                    pathname: "/user/[id]",
+                    params: { 
+                      id: recipientId,
+                      initialName: recipientName,
+                      initialAvatar: recipientAvatar !== 'undefined' ? recipientAvatar : undefined
+                    }
+                  });
+                }
+              }}
+            >
+              {recipientAvatar && recipientAvatar !== 'undefined' ? (
+                <Image source={{ uri: recipientAvatar as string }} style={styles.headerAvatar} />
+              ) : (
+                <View style={styles.headerAvatarPlaceholder}>
+                  <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{recipientName ? recipientName.charAt(0).toUpperCase() : 'C'}</Text>
+                </View>
+              )}
+              <View style={styles.headerInfo}>
+                <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>{recipientName || 'Chat'}</Text>
+                <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
+                  {remoteTyping ? 'Sedang mengetik...' : 'Online'}
+                </Text>
               </View>
-            )}
-            <View style={styles.headerInfo}>
-              <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>{recipientName || 'Chat'}</Text>
-              <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
-                {remoteTyping ? 'Sedang mengetik...' : 'Online'}
-              </Text>
-            </View>
+            </TouchableOpacity>
             {id && id !== 'new' && (
               <TouchableOpacity onPress={handleClearChat} style={styles.headerActionButton}>
                 <Trash2 size={20} color={theme.description} />

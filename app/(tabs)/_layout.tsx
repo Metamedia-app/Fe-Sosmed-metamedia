@@ -55,9 +55,13 @@ export default function TabLayout() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, isLoadingAuth } = useAuth();
   const { unreadChatSummary } = useSocket();
   const [isCreatePostVisible, setIsCreatePostVisible] = useState(false);
+
+  if (isLoadingAuth) {
+    return null; // Wait for AsyncStorage to load before deciding to redirect
+  }
 
   if (!isLoggedIn) {
     return <Redirect href="/login" />;

@@ -10,6 +10,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Plus, RefreshCcw } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, DeviceEventEmitter } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Story, storyService } from '@/utils/story';
 import CreateStoryModal from '@/components/CreateStoryModal';
 import StoryViewer from '@/components/StoryViewer';
@@ -43,6 +44,15 @@ export default function HomeScreen() {
   const [selectedStoryGroup, setSelectedStoryGroup] = useState<Story[]>([]);
   const [initialStoryIndex, setInitialStoryIndex] = useState(0);
   const [activeStoryIdForViewers, setActiveStoryIdForViewers] = useState<string | null>(null);
+  
+  // Robust Client-Side Viewed Stories Memory
+  const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    AsyncStorage.getItem('@viewed_stories').then(data => {
+      if (data) setViewedStoryIds(new Set(JSON.parse(data)));
+    });
+  }, []);
   
   // --- TELEMETRI PERFORMA SKRIPSI ---
   const mountTimeMs = React.useRef(performance.now());
@@ -372,7 +382,20 @@ export default function HomeScreen() {
     setPosts((prev) => prev.filter((p) => p._id !== postId && (p as any).id !== postId));
   };
 
-  const handleStorySeen = (storyId: string) => {
+  const handleStorySeen = useCallback((storyId: string) => {
+    setViewedStoryIds(prev => {
+      const newSet = new Set(prev);
+      newSet.add(storyId);
+      // Keep only recent 500 to avoid blowing up memory
+      if (newSet.size > 500) {
+         const arr = Array.from(newSet).slice(-250);
+         AsyncStorage.setItem('@viewed_stories', JSON.stringify(arr));
+         return new Set(arr);
+      }
+      AsyncStorage.setItem('@viewed_stories', JSON.stringify(Array.from(newSet)));
+      return newSet;
+    });
+
     setStories((prev: any) => 
       prev.map((group: any) => ({
         ...group,
@@ -381,7 +404,7 @@ export default function HomeScreen() {
         )
       }))
     );
-  };
+  }, []);
 
   const groupedStories = useMemo(() => {
     // Current stories state now contains StoryGroup[] from the API
@@ -406,6 +429,7 @@ export default function HomeScreen() {
 
         return {
           ...story,
+          is_viewed: story.is_viewed || viewedStoryIds.has(story._id),
           author_id: authorId,
           author: author,
           media: {

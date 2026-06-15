@@ -92,6 +92,59 @@ export default function GroupChatRoomScreen() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [cachedUri, setCachedUri] = useState<string | null>(null);
 
+  // Group Avatar Upload State
+  const [isUploadingGroupAvatar, setIsUploadingGroupAvatar] = useState(false);
+
+  const handlePickGroupAvatar = async () => {
+    if (!isDosen) return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setIsUploadingGroupAvatar(true);
+        const asset = result.assets[0];
+        
+        const formData = new FormData();
+        const fileExt = asset.uri.split('.').pop() || 'jpg';
+        const mimeType = `image/${fileExt}`;
+        
+        formData.append('file', {
+          uri: Platform.OS === 'ios' ? asset.uri.replace('file://', '') : asset.uri,
+          type: mimeType,
+          name: `group-avatar.${fileExt}`,
+        } as any);
+
+        const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat-matkul/${id}/avatar`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': '*/*'
+          },
+          body: formData,
+        });
+
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+          Alert.alert('Berhasil', 'Avatar grup berhasil diperbarui.');
+          setGroupDetail((prev: any) => ({ ...prev, avatar_url: data.data.avatar_url }));
+        } else {
+          Alert.alert('Gagal', data.message || 'Gagal mengunggah avatar grup');
+        }
+      }
+    } catch (error) {
+      console.error('Error uploading group avatar:', error);
+      Alert.alert('Error', 'Terjadi kesalahan saat mengunggah foto');
+    } finally {
+      setIsUploadingGroupAvatar(false);
+    }
+  };
+
   // Check if any modal is currently visible to isolate keyboard behavior
   const isAnyModalVisible = isMenuVisible || isDetailVisible || isSyllabusVisible || isAssignmentsVisible || isSyllabusUploadVisible || isAssignmentUploadVisible || isPreviewVisible;
   
@@ -742,13 +795,32 @@ export default function GroupChatRoomScreen() {
         isMe ? styles.messageWrapperRight : styles.messageWrapperLeft
       ]}>
         {!isMe && (
-          <Text style={[styles.senderName, { color: theme.description }]}>
-            {senderName}
-          </Text>
+          <View style={{ paddingLeft: 12, paddingBottom: 4 }}>
+            <Text style={{ color: theme.description, fontSize: 12, fontWeight: '500' }}>
+              {senderName}
+            </Text>
+          </View>
         )}
         <TouchableOpacity 
           activeOpacity={0.8}
           onLongPress={() => handleDeleteMessage(item)}
+          onPress={() => {
+            if (!isMe) {
+              const uId = item.sender_id?._id || item.sender_id?.id || (typeof item.sender_id === 'string' ? item.sender_id : item.sender_id?.nim);
+              if (uId) {
+                router.push({
+                  pathname: "/user/[id]",
+                  params: { 
+                    id: uId,
+                    initialName: senderName,
+                    initialNim: item.sender_id?.nim || ''
+                  }
+                });
+              } else {
+                Alert.alert('Info', 'Data profil tidak dapat dimuat.');
+              }
+            }
+          }}
           style={[
             styles.messageBubble,
             isMe ? [styles.messageBubbleRight, { backgroundColor: theme.tint }] : [styles.messageBubbleLeft, { backgroundColor: theme.card }]
@@ -822,6 +894,16 @@ export default function GroupChatRoomScreen() {
           <View style={[styles.header, { backgroundColor: theme.card, borderBottomColor: theme.border, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3 }]}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
               <ArrowLeft size={24} color={theme.text} />
+            </TouchableOpacity>
+
+            <TouchableOpacity activeOpacity={0.7} onPress={handleShowDetail} style={{ marginLeft: 8, marginRight: 12 }}>
+              {groupDetail?.avatar_url ? (
+                <Image source={{ uri: groupDetail.avatar_url }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+              ) : (
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: theme.tint + '20', justifyContent: 'center', alignItems: 'center' }}>
+                  <Users size={20} color={theme.tint} />
+                </View>
+              )}
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -1045,9 +1127,25 @@ export default function GroupChatRoomScreen() {
               >
                 {/* Index 0: Icon & Info Section */}
                 <View style={[styles.floatingCardHeader, { paddingBottom: 10, marginTop: 10 }]}>
-                  <View style={[styles.avatarPlaceholderLarge, { backgroundColor: theme.tint + '20' }]}>
-                    <Users size={32} color={theme.tint} />
-                  </View>
+                  <TouchableOpacity 
+                    onPress={handlePickGroupAvatar}
+                    disabled={!isDosen || isUploadingGroupAvatar}
+                    style={[styles.avatarPlaceholderLarge, { backgroundColor: theme.tint + '20', overflow: 'hidden' }]}
+                  >
+                    {isUploadingGroupAvatar ? (
+                      <ActivityIndicator size="small" color={theme.tint} />
+                    ) : groupDetail?.avatar_url ? (
+                      <Image source={{ uri: groupDetail.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                    ) : (
+                      <Users size={32} color={theme.tint} />
+                    )}
+                    
+                    {isDosen && !isUploadingGroupAvatar && (
+                      <View style={{ position: 'absolute', bottom: -2, right: -2, backgroundColor: theme.card, borderRadius: 12, padding: 4, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2 }}>
+                        <Camera size={14} color={theme.tint} />
+                      </View>
+                    )}
+                  </TouchableOpacity>
                 </View>
 
                 {/* Index 1: Sticky Name Section */}
@@ -1091,11 +1189,29 @@ export default function GroupChatRoomScreen() {
                       );
                       
                       const mName = member.nama || member.name || 'Anggota';
-                      const mId = member.nim || member._id || member.id;
+                      const mId = member._id || member.id || member.nim; // Prioritaskan _id sistem daripada nim
                       const avatarUrl = member.avatar_url || member.avatar;
                       
                       return (
-                        <View key={index} style={styles.floatingMemberItem}>
+                        <TouchableOpacity 
+                          key={index} 
+                          style={styles.floatingMemberItem}
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            if (mId) {
+                              setIsDetailVisible(false);
+                              router.push({
+                                pathname: "/user/[id]",
+                                params: { 
+                                  id: mId,
+                                  initialName: mName,
+                                  initialNim: member.nim || '',
+                                  initialAvatar: avatarUrl || ''
+                                }
+                              });
+                            }
+                          }}
+                        >
                           <View style={styles.memberAvatarContainer}>
                             {avatarUrl ? (
                               <SecureMedia 
@@ -1122,7 +1238,7 @@ export default function GroupChatRoomScreen() {
                               <Text style={[styles.roleTextSmall, { color: theme.tint, fontSize: 10, fontWeight: 'bold' }]}>DOSEN</Text>
                             </View>
                           )}
-                        </View>
+                        </TouchableOpacity>
                       );
                     })
                   )}

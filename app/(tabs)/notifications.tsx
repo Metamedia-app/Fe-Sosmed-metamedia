@@ -140,11 +140,13 @@ export default function NotificationsScreen() {
       setNotifications(prev => prev.map(n => n._id === notification._id ? { ...n, is_read: true } : n));
       setUnreadCount((prev: number) => Math.max(0, prev - 1));
       
-      const result = await notificationService.markAsRead(token, notification._id);
-      // Sync with server truth if back-end provides it
-      if (result.success && result.data?.unread_count !== undefined) {
-        setUnreadCount(result.data.unread_count);
-      }
+      // Fire-and-forget to server (DO NOT await this, let navigation happen instantly)
+      notificationService.markAsRead(token, notification._id).then((result) => {
+        // Sync with server truth if back-end provides it
+        if (result.success && result.data?.unread_count !== undefined) {
+          setUnreadCount(result.data.unread_count);
+        }
+      }).catch(console.error);
     }
 
     // Navigation logic

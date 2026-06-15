@@ -175,10 +175,10 @@ export default function ProfileScreen() {
     setIsPostsLoading(true);
     try {
       const [postsRes, repostsRes] = await Promise.all([
-        fetch(`${BASE_URL}/posts?author=${user._id}`, {
+        fetch(`${BASE_URL}/${user._id}/posts?limit=50`, {
           headers: { 'Authorization': `Bearer ${token}` }
         }),
-        fetch(`${BASE_URL}/posts?reposted_by=${user._id}`, {
+        fetch(`${BASE_URL}/${user._id}/reposts?limit=50`, {
           headers: { 'Authorization': `Bearer ${token}` }
         })
       ]);
@@ -186,27 +186,12 @@ export default function ProfileScreen() {
       const postsData = await postsRes.json();
       const repostsData = await repostsRes.json();
       
-      if (postsRes.ok) {
-        setPosts(postsData.data?.posts?.filter((p: any) => 
-          (p.author?._id || p.author?.id) === user?._id && p.type === 'original'
-        ) || []);
+      if (postsRes.ok && postsData.success) {
+        setPosts(postsData.data?.posts || []);
       }
-      if (repostsRes.ok) {
-        const rawReposts = repostsData.data?.posts?.filter((p: any) => 
-          p.type === 'repost' && (p.author?._id || p.author?.id) === user?._id
-        ) || [];
-        const uniqueReposts: any[] = [];
-        const seenIds = new Set();
-        
-        rawReposts.forEach((p: any) => {
-          const originalId = p.original_post_id?._id;
-          if (originalId && !seenIds.has(originalId)) {
-            seenIds.add(originalId);
-            uniqueReposts.push(p);
-          }
-        });
-        
-        setReposts(uniqueReposts);
+      
+      if (repostsRes.ok && repostsData.success) {
+        setReposts(repostsData.data?.posts || []);
       }
     } catch (error) {
       console.error('Error fetching profile content:', error);

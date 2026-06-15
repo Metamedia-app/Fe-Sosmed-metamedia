@@ -42,7 +42,7 @@ const SocketContext = createContext<SocketContextType | undefined>(undefined);
 const SOCKET_URL = 'https://besosmed-production.up.railway.app';
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const { token, user, isLoggedIn } = useAuth();
+  const { token, user, isLoggedIn, logout } = useAuth();
   const [lastEvent, setLastEvent] = useState<SocketEvent | null>(null);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [unreadChatSummary, setUnreadChatSummary] = useState({ total_unread: 0, categories: { inbox: 0, group: 0, community: 0 } });
@@ -150,7 +150,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       fetchInitialCount();
     });
 
-    socket.on('disconnect', () => setIsConnected(false));
+    socket.on('disconnect', (reason) => {
+      setIsConnected(false);
+      if (reason === "io server disconnect") {
+        console.warn("[Force Logout] Socket diputus paksa oleh Backend (Akun di-banned). Redirecting ke Login!");
+        logout();
+      }
+    });
     socket.on('connect_error', () => setIsConnected(false));
 
     const events = [
