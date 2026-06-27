@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/theme';
@@ -41,7 +41,8 @@ export default function LoginScreen() {
     setErrorMessage(null);
     setIsLoading(true);
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/auth/login', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/auth/login', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/auth/login', {
         method: 'POST',
         headers: {
           'accept': 'application/json',
@@ -85,6 +86,8 @@ export default function LoginScreen() {
       } else {
         if (response.status === 401) {
           setErrorMessage(result.message || 'NIM NIDN atau password salah.');
+        } else if (response.status === 403) {
+          setErrorMessage(result.message || 'Akun Anda telah dinonaktifkan/diblokir. Silakan hubungi pihak kampus untuk informasi lebih lanjut.');
         } else if (response.status === 500 || result.retryAfter) {
           if (result.retryAfter) {
             setCountdown(result.retryAfter);

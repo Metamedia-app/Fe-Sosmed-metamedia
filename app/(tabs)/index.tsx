@@ -1,4 +1,4 @@
-import { PostCard, PostData } from '@/components/PostCard';
+﻿import { PostCard, PostData } from '@/components/PostCard';
 import { getAvatarUrl } from '@/utils/avatar';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -8,6 +8,7 @@ import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { Plus, RefreshCcw } from 'lucide-react-native';
+import { useIsFocused } from '@react-navigation/native';
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, DeviceEventEmitter } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,6 +29,7 @@ export default function HomeScreen() {
   const theme = Colors[colorScheme];
   const { token, refreshSignal, user } = useAuth();
   const { lastEvent } = useSocket();
+  const isFocused = useIsFocused();
   
   const [posts, setPosts] = useState<PostData[]>([]);
   const [stories, setStories] = useState<Story[]>([]);
@@ -37,6 +39,19 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const flashListRef = React.useRef<any>(null);
 
+  // Pagination states (Using Refs for absolute stability, avoids useCallback recreation)
+  const postPageRef = React.useRef(1);
+  const [hasMorePosts, setHasMorePosts] = useState(true);
+  const [isFetchingMorePosts, setIsFetchingMorePosts] = useState(false);
+
+  const storyPageRef = React.useRef(1);
+  const [hasMoreStories, setHasMoreStories] = useState(true);
+  const [isFetchingMoreStories, setIsFetchingMoreStories] = useState(false);
+
+  // Robust Concurrent Fetch Guards
+  const fetchingMorePostsRef = React.useRef(false);
+  const fetchingMoreStoriesRef = React.useRef(false);
+
   // Modal States
   const [isCreateStoryVisible, setIsCreateStoryVisible] = useState(false);
   const [isStoryViewerVisible, setIsStoryViewerVisible] = useState(false);
@@ -44,6 +59,22 @@ export default function HomeScreen() {
   const [selectedStoryGroup, setSelectedStoryGroup] = useState<Story[]>([]);
   const [initialStoryIndex, setInitialStoryIndex] = useState(0);
   const [activeStoryIdForViewers, setActiveStoryIdForViewers] = useState<string | null>(null);
+  
+  // Viewability tracking for auto-play/pause videos
+  const [visiblePostId, setVisiblePostId] = useState<string | null>(null);
+  
+  const viewabilityConfig = React.useRef({
+    itemVisiblePercentThreshold: 60,
+  }).current;
+
+  const onViewableItemsChanged = React.useRef(({ viewableItems }: any) => {
+    if (viewableItems && viewableItems.length > 0) {
+      const visibleItem = viewableItems[0];
+      if (visibleItem && visibleItem.item && visibleItem.item._id) {
+        setVisiblePostId(visibleItem.item._id);
+      }
+    }
+  }).current;
   
   // Robust Client-Side Viewed Stories Memory
   const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(new Set());
@@ -62,7 +93,7 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!hasLoggedFCP.current) {
       const fcp = performance.now() - mountTimeMs.current;
-      console.log(`⏱️ [SKRIPSI - FCP] Waktu Render Kerangka (Skeleton): ${fcp.toFixed(2)} ms`);
+      console.log(`â±ï¸ [SKRIPSI - FCP] Waktu Render Kerangka (Skeleton): ${fcp.toFixed(2)} ms`);
       hasLoggedFCP.current = true;
     }
   }, []);
@@ -71,67 +102,140 @@ export default function HomeScreen() {
   const lastProcessedEventTime = React.useRef<number>(0);
   const mountTime = React.useRef<number>(Date.now());
 
-  const fetchStories = useCallback(async () => {
+  const fetchStories = useCallback(async (isRefresh = false, loadMore = false) => {
     if (!token) return;
-    setIsLoadingStories(true);
+    if (loadMore && (fetchingMoreStoriesRef.current || !hasMoreStories)) return;
+    
+    const currentPage = isRefresh ? 1 : (loadMore ? storyPageRef.current : 1);
+    
+    if (isRefresh) setHasMoreStories(true);
+    
+    if (loadMore) {
+      fetchingMoreStoriesRef.current = true;
+      setIsFetchingMoreStories(true);
+    } else if (!isRefresh) {
+      setIsLoadingStories(true);
+    }
+    
     try {
-      const result = await storyService.getStories(token);
+      const result = await storyService.getStories(token, currentPage, 10);
       if (result.success && result.data?.stories) {
-        setStories(result.data.stories as any);
+        const fetchedStories = result.data.stories as any[];
+        
+        if (fetchedStories.length < 10) {
+          setHasMoreStories(false);
+        } else if (isRefresh || currentPage === 1) {
+          setHasMoreStories(true);
+        }
+
+        if (isRefresh || currentPage === 1) {
+          setStories(fetchedStories);
+          storyPageRef.current = 2;
+        } else {
+          setStories((prev: any) => {
+             const merged = [...prev];
+             fetchedStories.forEach((newGroup: any) => {
+               const authorId = newGroup.user?._id || newGroup.author?._id || newGroup.user?.id;
+               const existIdx = merged.findIndex((g: any) => (g.user?._id || g.author?._id || g.user?.id) === authorId);
+               if (existIdx >= 0) {
+                 const mergedItems = [...(merged[existIdx].items || [])];
+                 (newGroup.items || []).forEach((ni: any) => {
+                   if (!mergedItems.find(mi => mi._id === ni._id)) mergedItems.push(ni);
+                 });
+                 merged[existIdx].items = mergedItems;
+               } else {
+                 merged.push(newGroup);
+               }
+             });
+             return merged;
+          });
+          storyPageRef.current = currentPage + 1;
+        }
+      } else {
+        if (isRefresh || currentPage === 1) setStories([]);
+        setHasMoreStories(false);
       }
     } catch (err) {
       console.error('Fetch stories error:', err);
     } finally {
       setIsLoadingStories(false);
+      setIsFetchingMoreStories(false);
+      fetchingMoreStoriesRef.current = false;
     }
-  }, [token]);
+  }, [token, hasMoreStories]);
 
-  const fetchPosts = useCallback(async (isRefresh = false) => {
+  const fetchPosts = useCallback(async (isRefresh = false, loadMore = false) => {
+    if (!token) return;
+    if (loadMore && (fetchingMorePostsRef.current || !hasMorePosts)) return;
+
     const fetchStartTime = performance.now();
+    const currentPage = isRefresh ? 1 : (loadMore ? postPageRef.current : 1);
+
     if (isRefresh) {
       setIsRefreshing(true);
-      fetchStories();
-      // CATAT ANALYTICS: Saat mahasiswa menarik feed ke bawah (Refresh)
+      fetchStories(true, false);
+      setHasMorePosts(true);
       logEvent('refresh_feed', { screen: 'Halaman_Beranda' });
+    } else if (loadMore) {
+      fetchingMorePostsRef.current = true;
+      setIsFetchingMorePosts(true);
     } else {
       setIsLoading(true);
     }
     setError(null);
 
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/posts', {
+      // [OLD API BACKUP]: const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/posts?page=${currentPage}&limit=10`, {
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/posts?page=${currentPage}&limit=10`, {
         method: 'GET',
         headers: {
           'accept': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
       });
-      const fetchEndTime = performance.now(); // Berhenti mencatat waktu murni jaringan
+      const fetchEndTime = performance.now();
 
       const result = await response.json();
 
       if (response.ok) {
-        const fetchedPosts = (result.data?.posts || []).filter((p: any) => p.type !== 'repost');
-        setPosts(fetchedPosts);
+        const rawPosts = result.data?.posts || result.data || [];
+        const fetchedPosts = rawPosts.filter((p: any) => p.type !== 'repost');
+        
+        // Gunakan has_more dari backend jika tersedia
+        const hasMoreData = result.data?.has_more !== undefined ? result.data.has_more : rawPosts.length >= 10;
+        
+        if (!hasMoreData) {
+          setHasMorePosts(false);
+        } else if (isRefresh || currentPage === 1) {
+          setHasMorePosts(true);
+        }
+
+        if (isRefresh || currentPage === 1) {
+          setPosts(fetchedPosts);
+          postPageRef.current = 2;
+        } else {
+          setPosts(prev => {
+             const existingIds = new Set(prev.map(p => p._id));
+             const uniqueNewPosts = fetchedPosts.filter((p: any) => !existingIds.has(p._id));
+             
+             console.log(`[Pagination] Beranda Feed Page ${currentPage} -> Ditarik: ${fetchedPosts.length}, Baru (Unique): ${uniqueNewPosts.length}`);
+             
+             if (uniqueNewPosts.length === 0 && fetchedPosts.length > 0) {
+                console.warn('[Pagination] Backend mengirim data yang persis sama. Hentikan penarikan data sementara.');
+                setHasMorePosts(false);
+             }
+             
+             return [...prev, ...uniqueNewPosts];
+          });
+          postPageRef.current = currentPage + 1;
+        }
 
         // --- TELEMETRI PERFORMA SKRIPSI ---
         setTimeout(() => {
           const renderEndTime = performance.now();
-          const pureFetchTime = fetchEndTime - fetchStartTime;
-          const uiRenderTime = renderEndTime - fetchEndTime;
-
           if (!hasLoggedInitialTTI.current) {
-            const initialTti = renderEndTime - mountTimeMs.current;
-            console.log(`⏱️ [SKRIPSI - FETCH] Jaringan API Murni: ${pureFetchTime.toFixed(2)} ms`);
-            console.log(`⏱️ [SKRIPSI - TTI AWAL] Total Waktu Aplikasi Buka s/d Siap Pakai: ${initialTti.toFixed(2)} ms`);
             hasLoggedInitialTTI.current = true;
-          } else if (isRefresh) {
-            const totalRefreshTime = renderEndTime - fetchStartTime;
-            console.log(`⏱️ [SKRIPSI - REFRESH] Waktu Jaringan (Fetch API): ${pureFetchTime.toFixed(2)} ms`);
-            console.log(`⏱️ [SKRIPSI - REFRESH] Waktu React Menggambar UI (Render): ${uiRenderTime.toFixed(2)} ms`);
-            console.log(`⏱️ [SKRIPSI - REFRESH] Waktu Refresh Total: ${totalRefreshTime.toFixed(2)} ms`);
           }
-          console.log('----------------------------------------------------');
         }, 0);
       } else {
         setError(result.message || 'Gagal mengambil postingan');
@@ -139,14 +243,21 @@ export default function HomeScreen() {
     } catch (err) {
       console.error('Fetch posts error:', err);
       setError('Kesalahan koneksi internet');
-      if (isRefresh) {
-        Alert.alert('Koneksi Terputus', 'Tidak ada jaringan internet. Menampilkan data terakhir yang disimpan.');
-      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      setIsFetchingMorePosts(false);
+      fetchingMorePostsRef.current = false;
     }
-  }, [token, fetchStories]);
+  }, [token, fetchStories, hasMorePosts]);
+
+  const handleLoadMorePosts = useCallback(() => {
+    console.log('[Pagination] FlashList mencapai bawah (onEndReached)!');
+    if (!hasMorePosts) {
+      console.log('[Pagination] Tapi hasMorePosts = false (Data dianggap sudah habis)');
+    }
+    fetchPosts(false, true);
+  }, [fetchPosts, hasMorePosts]);
 
   useEffect(() => {
     fetchStories();
@@ -154,13 +265,15 @@ export default function HomeScreen() {
     
     // CATAT ANALYTICS: Saat mahasiswa membuka Beranda
     logScreenView('Halaman_Beranda');
-  }, [refreshSignal, token, fetchPosts, fetchStories]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal, token]);
 
   // Listen for global refresh signal from CreatePostModal
   useEffect(() => {
     if (refreshSignal > 0) {
       fetchPosts(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshSignal]);
 
   // Listen for tab press to refresh
@@ -178,7 +291,7 @@ export default function HomeScreen() {
     };
   }, [fetchPosts]);
 
-  // Listen for socket events — keep feed live without full reload
+  // Listen for socket events â€” keep feed live without full reload
   useEffect(() => {
     if (!lastEvent) return;
 
@@ -528,6 +641,14 @@ export default function HomeScreen() {
           horizontal 
           showsHorizontalScrollIndicator={false} 
           contentContainerStyle={styles.storyContent}
+          onScroll={(e) => {
+            const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+            const isCloseToRight = layoutMeasurement.width + contentOffset.x >= contentSize.width - 50;
+            if (isCloseToRight && hasMoreStories && !isFetchingMoreStories) {
+              fetchStories(false, true);
+            }
+          }}
+          scrollEventThrottle={400}
         >
           {otherGroups.map((group, index) => (
             <View 
@@ -550,6 +671,11 @@ export default function HomeScreen() {
               </Text>
             </View>
           ))}
+          {isFetchingMoreStories && (
+            <View style={{ justifyContent: 'center', paddingHorizontal: 20 }}>
+              <ActivityIndicator size="small" color={theme.tint} />
+            </View>
+          )}
         </ScrollView>
       </View>
     );
@@ -590,12 +716,18 @@ export default function HomeScreen() {
             <PostCard 
               post={item} 
               onDeleteSuccess={() => handleDeleteSuccess(item._id)} 
+              isVisible={visiblePostId === item._id && isFocused}
             />
           )}
           // @ts-ignore
           estimatedItemSize={350}
           ListHeaderComponent={<StorySection />}
           ListEmptyComponent={!isLoading ? EmptyState : (null as any)}
+          ListFooterComponent={isFetchingMorePosts ? <ActivityIndicator size="small" color={theme.tint} style={{ marginVertical: 20 }} /> : null}
+          onEndReached={handleLoadMorePosts}
+          onEndReachedThreshold={0.5}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
           contentContainerStyle={styles.listContent}
           refreshControl={
             <RefreshControl 

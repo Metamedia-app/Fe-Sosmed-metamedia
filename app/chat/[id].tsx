@@ -47,6 +47,7 @@ export default function ChatRoomScreen() {
   const [selectedImage, setSelectedImage] = useState<any>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
+  const [isRemoteOnline, setIsRemoteOnline] = useState(false);
   
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const remoteTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -157,14 +158,24 @@ export default function ChatRoomScreen() {
       }
     };
 
+    const handleUserStatusChange = (data: any) => {
+      const { userId, status } = data;
+      // Match the incoming userId with the recipientId of this room
+      if (userId === recipientId) {
+        setIsRemoteOnline(status === 'online');
+      }
+    };
+
     socket.on('new_message', handleNewMessage);
     socket.on('typing_status', handleTypingStatus);
     socket.on('message_status_update', handleStatusUpdate);
+    socket.on('user_status_change', handleUserStatusChange);
 
     return () => {
       socket.off('new_message', handleNewMessage);
       socket.off('typing_status', handleTypingStatus);
       socket.off('message_status_update', handleStatusUpdate);
+      socket.off('user_status_change', handleUserStatusChange);
     };
   }, [socket, id, user?._id, token]);
 
@@ -438,9 +449,12 @@ export default function ChatRoomScreen() {
               )}
               <View style={styles.headerInfo}>
                 <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>{recipientName || 'Chat'}</Text>
-                <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.description }]}>
-                  {remoteTyping ? 'Sedang mengetik...' : 'Online'}
-                </Text>
+                {/* Only render status text if typing or online */}
+                {(remoteTyping || isRemoteOnline) ? (
+                  <Text style={[styles.headerStatus, { color: remoteTyping ? theme.tint : theme.tint }]}>
+                    {remoteTyping ? 'Sedang mengetik...' : 'Online'}
+                  </Text>
+                ) : null}
               </View>
             </TouchableOpacity>
             {id && id !== 'new' && (

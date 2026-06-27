@@ -2,7 +2,7 @@ import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import * as ImagePicker from 'expo-image-picker';
-import { Hash, Image as ImageIcon, MapPin, Play, User2, X } from 'lucide-react-native';
+import { Hash, Image as ImageIcon, MapPin, Play, User2, Users, X } from 'lucide-react-native';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -50,6 +50,7 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
   const [content, setContent] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [visibility, setVisibility] = useState<'public' | 'followers'>('public');
 
   // PanResponder for swiping down and entry animation
   const panY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -108,9 +109,11 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
     if (isVisible) {
       if (postToEdit) {
         setContent(postToEdit.caption || '');
+        setVisibility((postToEdit as any).visibility === 'followers' ? 'followers' : 'public');
         setSelectedMedia([]);
       } else {
         setContent('');
+        setVisibility('public');
         setSelectedMedia([]);
       }
     }
@@ -121,7 +124,7 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
     setIsLoading(true);
     try {
       if (postToEdit) {
-        const res = await updatePost(postToEdit._id, { caption: content }, token || '');
+        const res = await updatePost(postToEdit._id, { caption: content, visibility } as any, token || '');
         if (res.success) {
           Alert.alert('Berhasil', 'Postingan kamu sudah diperbarui!');
           logEvent('edit_post', { post_id: postToEdit._id });
@@ -134,6 +137,7 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
       } else {
         const formData = new FormData();
         formData.append('caption', content);
+        formData.append('visibility', visibility);
         for (const item of selectedMedia) {
           const filename = item.uri.split('/').pop() || `upload-${Date.now()}.jpg`;
           const ext = filename.split('.').pop()?.toLowerCase();
@@ -144,7 +148,8 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
           formData.append('files', { uri: item.uri, name: filename, type });
         }
 
-        const response = await fetch('https://besosmed-production.up.railway.app/api/v1/posts', {
+        // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/posts', {
+        const response = await fetch('https://api.metausosmed.my.id/api/v1/posts', {
           method: 'POST',
           headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` },
           body: formData,
@@ -279,10 +284,21 @@ export default function CreatePostModal({ isVisible, onClose, onSuccess, postToE
                 )}
                 <View>
                   <Text style={[styles.userName, { color: theme.text }]}>{userData.name}</Text>
-                  <View style={[styles.privacyBadge, { backgroundColor: theme.background }]}>
-                    <User2 size={12} color={theme.description} />
-                    <Text style={[styles.privacyText, { color: theme.description }]}>Publik</Text>
-                  </View>
+                  <TouchableOpacity 
+                    style={[styles.privacyBadge, { backgroundColor: theme.background, opacity: isLoading ? 0.7 : 1 }]}
+                    onPress={() => setVisibility(prev => prev === 'public' ? 'followers' : 'public')}
+                    disabled={isLoading}
+                    activeOpacity={0.7}
+                  >
+                    {visibility === 'public' ? (
+                      <User2 size={12} color={theme.description} />
+                    ) : (
+                      <Users size={12} color={theme.tint} />
+                    )}
+                    <Text style={[styles.privacyText, { color: visibility === 'public' ? theme.description : theme.tint }]}>
+                      {visibility === 'public' ? 'Publik' : 'Pengikut'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 

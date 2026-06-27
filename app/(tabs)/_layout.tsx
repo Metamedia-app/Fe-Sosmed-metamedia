@@ -137,12 +137,15 @@ export default function TabLayout() {
             tabBarLabel: 'Beranda',
             tabBarIcon: ({ color, size }) => <Home size={size} color={color} />,
           }}
-          listeners={{
+          listeners={({ navigation }) => ({
             tabPress: (e) => {
-              // Kirim sinyal agar halaman index bisa merefresh atau scroll ke atas
-              DeviceEventEmitter.emit('homeTabPressToRefresh');
+              // Jika SEDANG berada di Beranda, klik tab ini akan me-refresh (Scroll to top)
+              // Jika DARI halaman lain, klik tab ini HANYA akan berpindah layar biasa tanpa reset posisi
+              if (navigation.isFocused()) {
+                DeviceEventEmitter.emit('homeTabPressToRefresh');
+              }
             },
-          }}
+          })}
         />
         <Tabs.Screen
           name="explore"

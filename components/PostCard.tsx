@@ -11,7 +11,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { MessageCircle, MoreHorizontal, Repeat, Share2, ThumbsUp } from 'lucide-react-native';
+import { MessageCircle, MoreHorizontal, Repeat, Share2, ThumbsUp, Volume2, VolumeX } from 'lucide-react-native';
 import React, { useState, useEffect, useRef } from 'react';
 import { Alert, Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
@@ -78,26 +78,59 @@ export type PostData = {
 /**
  * Sub-component to handle individual media items (Image or Video)
  */
-const PostMediaItem = ({ media, theme }: { media: PostMedia; theme: any }) => {
+const PostMediaItem = ({ media, theme, isVisible = true }: { media: PostMedia; theme: any; isVisible?: boolean }) => {
   const isVideo = media.type === 'video';
+  const [isMuted, setIsMuted] = React.useState(false);
   
   const player = useVideoPlayer(media.url, (player) => {
     if (isVideo) {
       player.loop = true;
-      player.muted = true;
-      player.play();
+      player.muted = isMuted;
     }
   });
 
+  React.useEffect(() => {
+    if (player) {
+      player.muted = isMuted;
+    }
+  }, [isMuted, player]);
+
+  React.useEffect(() => {
+    if (isVideo && player) {
+      if (isVisible) {
+        player.play();
+      } else {
+        player.pause();
+      }
+    }
+  }, [isVisible, isVideo, player]);
+
   if (isVideo) {
     return (
-      <VideoView
-        player={player}
-        style={styles.postMediaItem}
-        contentFit="cover"
-        allowsFullscreen
-        allowsPictureInPicture
-      />
+      <View style={[styles.postMediaItem, { position: 'relative', overflow: 'hidden' }]}>
+        <VideoView
+          player={player}
+          style={{ width: '100%', height: '100%' }}
+          contentFit="cover"
+          allowsFullscreen
+          allowsPictureInPicture
+        />
+        <TouchableOpacity 
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            borderRadius: 20,
+            padding: 8,
+            zIndex: 10
+          }}
+          onPress={() => setIsMuted(!isMuted)}
+          activeOpacity={0.7}
+        >
+          {isMuted ? <VolumeX size={16} color="#FFF" /> : <Volume2 size={16} color="#FFF" />}
+        </TouchableOpacity>
+      </View>
     );
   }
 
@@ -179,12 +212,14 @@ export const PostCard = ({
   post, 
   onDeleteSuccess, 
   initialShowComments = false,
-  targetCommentId
+  targetCommentId,
+  isVisible = true
 }: { 
   post: PostData; 
   onDeleteSuccess?: () => void;
   initialShowComments?: boolean;
   targetCommentId?: string;
+  isVisible?: boolean;
 }) => {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
@@ -700,7 +735,7 @@ export const PostCard = ({
           >
             {post.media.map((item, index) => (
               <View key={index} style={styles.mediaSlide}>
-                <PostMediaItem media={item} theme={theme} />
+                <PostMediaItem media={item} theme={theme} isVisible={isVisible && index === activeIndex} />
               </View>
             ))}
           </ScrollView>

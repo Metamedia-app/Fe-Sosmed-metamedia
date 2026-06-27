@@ -41,6 +41,7 @@ export default function CommunityChatScreen() {
   const [isRemovingMember, setIsRemovingMember] = useState<string | null>(null);
   const [isDeletingCommunity, setIsDeletingCommunity] = useState(false);
   
+  const isSendingRef = useRef(false);
   const flatListRef = useRef<FlatList>(null);
   const typingTimeoutRef = useRef<any>(null);
   const remoteTypingTimeouts = useRef<{[key: string]: any}>({});
@@ -123,6 +124,21 @@ export default function CommunityChatScreen() {
       if (data.community_id === id || data.conversation_id === id) {
         setMessages(prev => {
           if (prev.some(m => m._id === data._id)) return prev;
+          
+          const isMyMessage = data.sender_id?._id === user?._id || data.sender_id === user?._id;
+          if (isMyMessage) {
+            const pendingIdx = prev.findIndex(m => 
+              m.status === 'pending' && 
+              m._id.startsWith('temp-') && 
+              (m.body === data.body || (!m.body && !data.body))
+            );
+            if (pendingIdx >= 0) {
+              const updated = [...prev];
+              updated[pendingIdx] = data; // Replace pending with the real one
+              return updated;
+            }
+          }
+          
           return [data, ...prev];
         });
         if (data.sender_id?._id !== user?._id && data.sender_id !== user?._id) {
@@ -244,8 +260,9 @@ export default function CommunityChatScreen() {
   };
 
   const handleSendMessage = async () => {
-    if ((!inputText.trim() && !selectedImage) || isSending || !token || !id) return;
+    if ((!inputText.trim() && !selectedImage) || isSendingRef.current || !token || !id) return;
 
+    isSendingRef.current = true;
     const tempId = `temp-${Date.now()}`;
     const currentText = inputText;
     const currentImage = selectedImage;
@@ -279,7 +296,9 @@ export default function CommunityChatScreen() {
       setInputText(currentText);
       setSelectedImage(currentImage);
     }
+    
     setIsSending(false);
+    isSendingRef.current = false;
   };
 
   const handleInvite = async () => {

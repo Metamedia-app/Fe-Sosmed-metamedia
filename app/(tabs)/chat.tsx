@@ -2,7 +2,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { MessageSquareText, Radio, Search, Users, Check, CheckCheck, Clock, SquarePlus } from 'lucide-react-native';
 import React, { useState, useCallback, useEffect } from 'react';
-import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Alert } from 'react-native';
+import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Alert, ScrollView } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
@@ -117,7 +117,7 @@ export default function ChatScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isCreateCommunityVisible, setIsCreateCommunityVisible] = useState(false);
   const { token, user } = useAuth();
-  const { lastEvent, unreadChatSummary, refreshUnreadChat, socket } = useSocket();
+  const { lastEvent, unreadChatSummary, refreshUnreadChat, socket, onlineUsers } = useSocket();
   const router = useRouter();
 
   const fetchChats = useCallback(async (silent = false) => {
@@ -335,20 +335,27 @@ export default function ChatScreen() {
       </View>
 
       {/* Categories Tabs */}
-      <View style={[styles.tabsContainer]}>
-        {renderCategoryTab('inbox', 'Inbox', MessageSquareText, unreadChatSummary?.categories?.inbox)}
-        {renderCategoryTab('grup', 'Grup', Users, unreadChatSummary?.categories?.group)}
-        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-          {renderCategoryTab('community', 'Community', Radio, unreadChatSummary?.categories?.community)}
-          {activeCategory === 'community' && (
-            <TouchableOpacity 
-              style={[styles.createCommunityBtn, { backgroundColor: theme.tint + '20' }]}
-              onPress={() => setIsCreateCommunityVisible(true)}
-            >
-              <SquarePlus size={18} color={theme.tint} />
-            </TouchableOpacity>
-          )}
-        </View>
+      <View>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          contentContainerStyle={styles.tabsContainer}
+        >
+          {renderCategoryTab('inbox', 'Inbox', MessageSquareText, unreadChatSummary?.categories?.inbox)}
+          {renderCategoryTab('grup', 'Grup', Users, unreadChatSummary?.categories?.group)}
+          
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {renderCategoryTab('community', 'Community', Radio, unreadChatSummary?.categories?.community)}
+            {activeCategory === 'community' && (
+              <TouchableOpacity 
+                style={[styles.createCommunityBtn, { backgroundColor: theme.tint + '20', marginLeft: 10 }]}
+                onPress={() => setIsCreateCommunityVisible(true)}
+              >
+                <SquarePlus size={18} color={theme.tint} />
+              </TouchableOpacity>
+            )}
+          </View>
+        </ScrollView>
       </View>
       {isLoading ? (
         <View style={{ flex: 1 }}>
@@ -376,6 +383,7 @@ export default function ChatScreen() {
           const targetUser = isInbox ? item.user : null;
           const name = isInbox ? targetUser?.nama : (isGroup || isCommunity) ? item.name : item.name;
           const avatar = isInbox ? targetUser?.avatar_url : (isGroup || isCommunity) ? item.avatar_url : item.avatar;
+          const isOnline = isInbox && targetUser && onlineUsers[targetUser._id || targetUser.id];
             
             // For groups/communities, API might not send last_message string directly or send an ID
             const defaultLastMessage = isGroup ? (item.subject_info ? `Kode: ${item.subject_info.code}` : 'Ketuk untuk membuka grup') 
@@ -438,18 +446,33 @@ export default function ChatScreen() {
                   }
                 }}
               >
-                {avatar && avatar.includes('workers.dev') ? (
-                  // Normal avatar (public)
-                  <Image source={{ uri: avatar }} style={styles.avatar} />
-                ) : avatar ? (
-                  // Encrypted or other media
-                  <SecureMedia url={avatar} token={token} style={styles.avatar} />
-                ) : (
-                  // Default placeholder
-                  <View style={[styles.avatar, { justifyContent: 'center', alignItems: 'center', backgroundColor: theme.border }]}>
-                    <Users size={24} color={theme.description} />
-                  </View>
-                )}
+                <View style={{ position: 'relative' }}>
+                  {avatar && avatar.includes('workers.dev') ? (
+                    // Normal avatar (public)
+                    <Image source={{ uri: avatar }} style={styles.avatar} />
+                  ) : avatar ? (
+                    // Encrypted or other media
+                    <SecureMedia url={avatar} token={token} style={styles.avatar} />
+                  ) : (
+                    // Default placeholder
+                    <View style={[styles.avatar, { justifyContent: 'center', alignItems: 'center', backgroundColor: theme.border }]}>
+                      <Users size={24} color={theme.description} />
+                    </View>
+                  )}
+                  {isOnline && (
+                    <View style={{
+                      position: 'absolute',
+                      bottom: 2,
+                      right: 17,
+                      width: 14,
+                      height: 14,
+                      borderRadius: 7,
+                      backgroundColor: '#4CAF50',
+                      borderWidth: 2,
+                      borderColor: theme.background
+                    }} />
+                  )}
+                </View>
                 
                 <View style={styles.chatInfo}>
                   <View style={styles.chatHeader}>

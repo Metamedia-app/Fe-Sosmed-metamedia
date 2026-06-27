@@ -1,4 +1,5 @@
-const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/chat/communities';
+﻿// [OLD API BACKUP]: const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/chat/communities';
+const BASE_URL = 'https://api.metausosmed.my.id/api/v1/chat/communities';
 
 export interface Community {
   _id: string;
@@ -115,7 +116,11 @@ export const communityService = {
         },
         body: formData
       });
-      return await response.json();
+      const data = await response.json();
+      if (response.ok && data.success === undefined) {
+        data.success = true;
+      }
+      return data;
     } catch (error) {
       console.error('Error sending community message:', error);
       return { success: false, message: 'Gagal mengirim pesan' };
@@ -135,7 +140,8 @@ export const communityService = {
         body: JSON.stringify({ conversationId, isTyping })
       });
     } catch (error) {
-      console.error('Error setting typing status:', error);
+      // Suppress network error spam for typing indicator
+      // console.warn('Note: Typing status endpoint unavailable or network error');
     }
   },
 
@@ -182,7 +188,11 @@ export const communityService = {
         },
         body: JSON.stringify({ communityId, nim })
       });
-      return await response.json();
+      const data = await response.json();
+      if (response.ok && data.success === undefined) {
+        data.success = true;
+      }
+      return data;
     } catch (error) {
       console.error('Error inviting member:', error);
       return { success: false, message: 'Gagal mengundang anggota' };

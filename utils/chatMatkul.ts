@@ -145,7 +145,8 @@ export const sendGroupTypingStatus = async (conversationId: string, isTyping: bo
     const result = await response.json();
     return { success: response.ok && result.success };
   } catch (error) {
-    console.error('Error sending group typing status:', error);
+    // Suppress network error spam for typing indicator
+    // console.warn('Note: Group typing status endpoint unavailable or network error');
     return { success: false };
   }
 };

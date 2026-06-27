@@ -1,4 +1,4 @@
-
+﻿
 export interface GroupedItem {
   user_id: string;
   nama: string;
@@ -28,7 +28,8 @@ export interface Notification {
   createdAt: string;
 }
 
-const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/notifications';
+// [OLD API BACKUP]: const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/notifications';
+const BASE_URL = 'https://api.metausosmed.my.id/api/v1/notifications';
 
 export const notificationService = {
   getNotifications: async (token: string, limit = 20, skip = 0): Promise<{ success: boolean; data?: { notifications: Notification[] }; message?: string }> => {

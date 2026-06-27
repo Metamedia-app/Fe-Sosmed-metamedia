@@ -103,8 +103,11 @@ export const CommentModal = ({
 
   // Mengandalkan native KeyboardAvoidingView dan adjustResize Android
 
-  // ── Propagate count changes ───────────────────────────────────────────────
-  useEffect(() => { onCountChange?.(totalComments); }, [totalComments]);
+  // ── Propagate count changes (SAFE LOOP-FREE) ─────────────────────────────
+  // PENGHAPUSAN: Kita tidak lagi memantau totalComments dengan useEffect
+  // karena ketika komentar berhasil dikirim/dihapus, aplikasi sudah menggunakan
+  // broadcastPostStatsUpdate (Event Emitter) untuk memperbarui tampilan di Beranda.
+  // Ini 100% memutus lingkaran setan Maximum update depth exceeded.
 
   // Sync with prop (Source of Truth from HomeScreen/PostCard)
   useEffect(() => {

@@ -1,4 +1,4 @@
-import * as Notifications from 'expo-notifications';
+﻿import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
@@ -12,7 +12,8 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/fcm-token';
+// [OLD API BACKUP]: const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/fcm-token';
+const BASE_URL = 'https://api.metausosmed.my.id/api/v1/fcm-token';
 
 export const registerForPushNotificationsAsync = async () => {
   let token;
@@ -42,7 +43,7 @@ export const registerForPushNotificationsAsync = async () => {
       // Get the token from Expo
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
       token = (await Notifications.getDevicePushTokenAsync()).data;
-      console.log('📦 FCM Device Token:', token);
+      console.log('ðŸ“¦ FCM Device Token:', token);
     } catch (e) {
       console.error('Error getting push token:', e);
       return null;
@@ -62,12 +63,12 @@ export const pushNotificationService = {
     onNotificationResponse?: (response: Notifications.NotificationResponse) => void
   ) => {
     const notificationListener = Notifications.addNotificationReceivedListener(notification => {
-      console.log('🔔 Notification Received:', notification);
+      console.log('ðŸ”” Notification Received:', notification);
       if (onNotificationReceived) onNotificationReceived(notification);
     });
 
     const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
-      console.log('📩 Notification Response:', response);
+      console.log('ðŸ“© Notification Response:', response);
       if (onNotificationResponse) onNotificationResponse(response);
     });
 
@@ -89,10 +90,10 @@ export const pushNotificationService = {
         body: JSON.stringify({ token: fcmToken }),
       });
       const result = await response.json();
-      console.log('🚀 FCM Token saved to server:', result);
+      console.log('ðŸš€ FCM Token saved to server:', result);
       return result;
     } catch (error) {
-      console.error('❌ Error saving FCM token:', error);
+      console.error('âŒ Error saving FCM token:', error);
       return { success: false, error };
     }
   },
@@ -109,10 +110,10 @@ export const pushNotificationService = {
         body: JSON.stringify({ token: fcmToken }),
       });
       const result = await response.json();
-      console.log('🗑️ FCM Token deleted from server:', result);
+      console.log('ðŸ—‘ï¸ FCM Token deleted from server:', result);
       return result;
     } catch (error) {
-      console.error('❌ Error deleting FCM token:', error);
+      console.error('âŒ Error deleting FCM token:', error);
       return { success: false, error };
     }
   }

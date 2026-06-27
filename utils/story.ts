@@ -55,8 +55,8 @@ export interface ViewersResponse {
 }
 
 export const storyService = {
-  getStories: async (token: string): Promise<StoryResponse> => {
-    const response = await fetch(`${BASE_URL}/stories`, {
+  getStories: async (token: string, page = 1, limit = 10): Promise<StoryResponse> => {
+    const response = await fetch(`${BASE_URL}/stories?page=${page}&limit=${limit}`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'Accept': 'application/json',

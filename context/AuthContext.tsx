@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { Platform } from 'react-native';
+﻿import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { Platform, Alert } from 'react-native';
 import Constants from 'expo-constants';
 import { loadGoogleScript, loginRequestWeb } from '@/utils/googleAuth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 
 type User = {
   id: string;
@@ -73,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               webClientId: WEB_CLIENT_ID,
               offlineAccess: true,
             });
-            console.log('[GoogleSignin] Configured successfully ✅');
+            console.log('[GoogleSignin] Configured successfully âœ…');
           }
         } else {
           console.log('[GoogleSignin] Skipped configuration (Expo Go environment)');
@@ -114,7 +115,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const response = await originalFetch.apply(this, args);
         if (response.status === 403) {
+          
+          // --- CEK APAKAH INI ERROR KHUSUS GOOGLE LOGIN (JANGAN DIBLOKIR) ---
+          try {
+            const clone = response.clone();
+            const body = await clone.json();
+            if (body && body.errorCode === 'ACCOUNT_NOT_LINKED') {
+              // Biarkan lolos agar ditangkap oleh halaman Login
+              return response;
+            }
+          } catch (e) {
+            // Abaikan jika bukan JSON
+          }
+
           console.warn("[Force Logout] Banned! API mengembalikan status 403 Forbidden.");
+          
+          // Tampilkan alert pemberitahuan sebelum melempar ke login
+          Alert.alert(
+            'Akses Diblokir',
+            'Sesi dihentikan karena akun Anda telah dinonaktifkan. Silakan hubungi pihak kampus untuk informasi lebih lanjut.',
+            [{ text: 'Tutup' }]
+          );
           
           // If we have an FCM token and auth token, try to delete it from server first
           if (token && fcmToken) {
@@ -132,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           setFcmToken(null);
           setIsLoggedIn(false);
+          router.replace('/login');
         }
         return response;
       } catch (error) {
@@ -179,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setFcmToken(null);
     setIsLoggedIn(false);
+    router.replace('/login');
   };
 
   const triggerRefresh = () => {
@@ -196,7 +219,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshProfile = async () => {
     if (!token) return;
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/me', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/json',
@@ -227,7 +251,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateProfile = async (data: { bio?: string; tempat_lahir?: string; tanggal_lahir?: string; agama?: string }) => {
     if (!token) return { success: false, message: 'No token found' };
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/me', {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -268,7 +293,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         name: fileName || 'avatar.jpg',
       } as any);
 
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/avatar', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/avatar', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/me/avatar', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -301,7 +327,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const deleteAvatar = async () => {
     if (!token) return { success: false, message: 'No token found' };
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/avatar', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/avatar', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/me/avatar', {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -329,7 +356,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const changePassword = async (data: { oldPassword?: string; newPassword?: string }) => {
     if (!token) return { success: false, message: 'No token found' };
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/password', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/password', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/me/password', {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -392,7 +420,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('[LinkGoogle] JWT Token:', token?.substring(0, 10) + '...');
       console.log('[LinkGoogle] Google idToken:', idToken.substring(0, 10) + '...');
 
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/link-google', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/me/link-google', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/me/link-google', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -457,7 +486,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!idToken) return { success: false, message: 'Gagal mengambil idToken dari Google' };
 
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/auth/google', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/auth/google', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/auth/google', {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
@@ -493,6 +523,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await login(newToken, userData, fcmTokenResult);
         return { success: true };
       } else {
+        // --- TANGKAP ERROR CODE DARI BACKEND TIM (ACCOUNT_NOT_LINKED atau Banned) ---
+        if (response.status === 403) {
+          if (result.errorCode === 'ACCOUNT_NOT_LINKED') {
+            return { success: false, message: 'Akun Google belum ditautkan. Login menggunakan NIM dulu!' };
+          } else {
+            return { success: false, message: result.message || 'Akun Anda sedang dibatasi.' };
+          }
+        }
+        
         return { success: false, message: result.message || 'Gagal login via Google' };
       }
     } catch (error: any) {

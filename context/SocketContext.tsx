@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useEffect, useRef, useState, ReactNode, useCallback } from 'react';
+﻿import React, { createContext, useContext, useEffect, useRef, useState, ReactNode, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus, Alert } from 'react-native';
 import { Audio } from 'expo-av';
 import { useAuth } from './AuthContext';
 import { notificationService } from '@/utils/notification';
@@ -30,6 +30,7 @@ type SocketContextType = {
   refreshUnreadChat: () => void;
   isConnected: boolean;
   socket: Socket | null;
+  onlineUsers: Record<string, boolean>;
   // Sound related
   soundTheme: keyof typeof SOUND_THEMES;
   setSoundTheme: (theme: keyof typeof SOUND_THEMES) => void;
@@ -39,7 +40,8 @@ type SocketContextType = {
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
 // URL backend
-const SOCKET_URL = 'https://besosmed-production.up.railway.app';
+// [OLD API BACKUP]: const SOCKET_URL = 'https://besosmed-production.up.railway.app';
+const SOCKET_URL = 'https://api.metausosmed.my.id';
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const { token, user, isLoggedIn, logout } = useAuth();
@@ -48,6 +50,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [unreadChatSummary, setUnreadChatSummary] = useState({ total_unread: 0, categories: { inbox: 0, group: 0, community: 0 } });
   const [lastNotification, setLastNotification] = useState<any | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState<Record<string, boolean>>({});
   const [soundTheme, setSoundTheme] = useState<keyof typeof SOUND_THEMES>('ethereal');
   const socketRef = useRef<Socket | null>(null);
   const appState = useRef(AppState.currentState);
@@ -154,6 +157,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setIsConnected(false);
       if (reason === "io server disconnect") {
         console.warn("[Force Logout] Socket diputus paksa oleh Backend (Akun di-banned). Redirecting ke Login!");
+        Alert.alert(
+          'Akses Diblokir',
+          'Sesi Anda dihentikan karena akun telah dinonaktifkan. Silakan hubungi pihak kampus untuk informasi lebih lanjut.',
+          [{ text: 'Tutup' }]
+        );
         logout();
       }
     });
@@ -163,11 +171,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       'new_post', 'new_comment', 'like_update', 'share_update', 'repost_update', 
       'notification', 'delete_post', 'follow_update', 'story_view_update', 
       'new_message', 'group_message', 'typing_status', 'group_typing_status', 'unread_update',
-      'message_status_update'
+      'message_status_update', 'user_status_change'
     ];
 
     events.forEach(eventType => {
       socket.on(eventType, (data) => {
+        if (eventType === 'user_status_change') {
+          console.log("Ada user berubah status!", data);
+          if (data?.userId) {
+            setOnlineUsers(prev => ({
+              ...prev,
+              [data.userId]: data.status === 'online'
+            }));
+          }
+        }
         if (eventType.includes('typing') || eventType.includes('message') || eventType === 'unread_update') {
           console.log(`[SocketEvent] ${eventType}:`, data);
         }
@@ -228,6 +245,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       refreshUnreadChat,
       isConnected, 
       socket: socketRef.current,
+      onlineUsers,
       soundTheme,
       setSoundTheme,
       playNotificationSound

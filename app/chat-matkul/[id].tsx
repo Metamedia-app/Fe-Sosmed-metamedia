@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Keyboard,
@@ -57,6 +57,7 @@ export default function GroupChatRoomScreen() {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const isSendingRef = useRef(false);
   const [selectedImage, setSelectedImage] = useState<any>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [typingUsers, setTypingUsers] = useState<{[key: string]: string}>({});
@@ -119,7 +120,8 @@ export default function GroupChatRoomScreen() {
           name: `group-avatar.${fileExt}`,
         } as any);
 
-        const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat-matkul/${id}/avatar`, {
+        // [OLD API BACKUP]: const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat-matkul/${id}/avatar`, {
+        const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat-matkul/${id}/avatar`, {
           method: 'PATCH',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -249,15 +251,32 @@ export default function GroupChatRoomScreen() {
     markGroupAsRead(id as string, token as string);
 
     const handleGroupMessage = (data: any) => {
-      if (data.conversation_id === id) {
-        // Mark as read when new message arrives
-        markGroupAsRead(id as string, token as string);
-        
+      if (data.community_id === id || data.conversation_id === id) {
         setMessages(prev => {
-          const exists = prev.findIndex(m => m._id === data._id) !== -1;
-          if (exists) return prev;
+          // If already exist by real ID
+          if (prev.some(m => m._id === data._id)) return prev;
+          
+          // Smart Reconciliation: Prevent visual double-message glitch
+          // Check if this is my own message that came via socket before HTTP finished
+          const isMyMessage = data.sender_id?._id === user?._id || data.sender_id === user?._id;
+          if (isMyMessage) {
+            const pendingIdx = prev.findIndex(m => 
+              m.status === 'pending' && 
+              m._id.startsWith('temp-') && 
+              (m.body === data.body || (!m.body && !data.body))
+            );
+            if (pendingIdx >= 0) {
+              const updated = [...prev];
+              updated[pendingIdx] = data; // Replace pending with the real one
+              return updated;
+            }
+          }
+          
           return [data, ...prev];
         });
+        if (data.sender_id?._id !== user?._id && data.sender_id !== user?._id) {
+          markGroupAsRead(id as string, token as string);
+        }
       }
     };
 
@@ -384,9 +403,10 @@ export default function GroupChatRoomScreen() {
   };
 
   const handleSendMessage = async () => {
-    if ((!inputText.trim() && !selectedImage) || isSending) return;
+    if ((!inputText.trim() && !selectedImage) || isSendingRef.current) return;
     if (!token) return;
 
+    isSendingRef.current = true;
     const tempId = `temp-${Date.now()}`;
     const currentText = inputText;
     const currentImage = selectedImage;
@@ -444,13 +464,15 @@ export default function GroupChatRoomScreen() {
       setSelectedImage(currentImage);
     } finally {
       setIsSending(false);
+      isSendingRef.current = false;
     }
   };
 
   const fetchSyllabus = async () => {
     setIsLoadingSyllabus(true);
     try {
-      const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/syllabus`, {
+      // [OLD API BACKUP]: const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/syllabus`, {
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/syllabus`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const result = await response.json();
@@ -465,7 +487,8 @@ export default function GroupChatRoomScreen() {
   const fetchAssignments = async () => {
     setIsLoadingAssignments(true);
     try {
-      const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/assignments`, {
+      // [OLD API BACKUP]: const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/assignments`, {
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/assignments`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const result = await response.json();
@@ -494,7 +517,8 @@ export default function GroupChatRoomScreen() {
     if (!silent) setIsDownloading(true);
     
     try {
-      const prodUrl = url.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app');
+      // [OLD API BACKUP]: const prodUrl = url.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app');
+      const prodUrl = url.replace('http://localhost:3000', 'https://api.metausosmed.my.id');
       const sanitizedFileName = fileName.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
       const fileUri = `${FileSystem.cacheDirectory}${sanitizedFileName}`;
       
@@ -592,7 +616,8 @@ export default function GroupChatRoomScreen() {
     });
 
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/syllabus', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/syllabus', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/chat/subject/syllabus', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -646,7 +671,8 @@ export default function GroupChatRoomScreen() {
     }
 
     try {
-      const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/assignments', {
+      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/assignments', {
+      const response = await fetch('https://api.metausosmed.my.id/api/v1/chat/subject/assignments', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -717,7 +743,8 @@ export default function GroupChatRoomScreen() {
     console.log('🔄 [MUTE DEBUG] Current mute status:', groupDetail.is_muted, '-> Target status:', newMuteStatus);
     
     try {
-      const url = `https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/mute`;
+      // [OLD API BACKUP]: const url = `https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/mute`;
+      const url = `https://api.metausosmed.my.id/api/v1/chat/subject/${id}/mute`;
       console.log('📡 [MUTE DEBUG] Patching to URL:', url);
       
       const response = await fetch(url, {
@@ -732,6 +759,10 @@ export default function GroupChatRoomScreen() {
       console.log('📥 [MUTE DEBUG] Response status:', response.status);
       const result = await response.json();
       console.log('📦 [MUTE DEBUG] Response body:', JSON.stringify(result));
+      
+      if (response.ok && result.success === undefined) {
+        result.success = true;
+      }
       
       if (result.success) {
         console.log('✅ [MUTE DEBUG] Success! Updating state.');
@@ -1215,7 +1246,8 @@ export default function GroupChatRoomScreen() {
                           <View style={styles.memberAvatarContainer}>
                             {avatarUrl ? (
                               <SecureMedia 
-                                url={avatarUrl.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app')} 
+                                // [OLD API BACKUP]: url={avatarUrl.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app')} 
+                                url={avatarUrl.replace('http://localhost:3000', 'https://api.metausosmed.my.id')} 
                                 token={token} 
                                 style={styles.memberAvatarSmall} 
                               />
@@ -1292,7 +1324,8 @@ export default function GroupChatRoomScreen() {
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             {activeAttachment && (
               <SecureMedia 
-                url={activeAttachment.url.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app')} 
+                // [OLD API BACKUP]: url={activeAttachment.url.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app')} 
+                url={activeAttachment.url.replace('http://localhost:3000', 'https://api.metausosmed.my.id')} 
                 token={token} 
                 style={{ width: '100%', height: '80%' }}
                 // @ts-ignore

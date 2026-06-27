@@ -10,6 +10,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { SocketProvider } from '@/context/SocketContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { pushNotificationService } from '@/utils/pushNotification';
+import GlobalAlert from '@/components/GlobalAlert';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -61,6 +62,7 @@ export default function RootLayout() {
             <Stack.Screen name="settings" options={{ title: 'Pengaturan', headerBackTitle: 'Kembali' }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
           </Stack>
+          <GlobalAlert />
           <StatusBar style="auto" hidden={Platform.OS === 'android'} />
         </ThemeProvider>
       </SocketProvider>
