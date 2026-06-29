@@ -73,6 +73,33 @@ export default function SearchScreen() {
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // States for Suggestion API
+  const [suggestedStudents, setSuggestedStudents] = useState<any[]>([]);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(true);
+
+  React.useEffect(() => {
+    if (token) {
+      fetchSuggestions();
+    }
+  }, [token]);
+
+  const fetchSuggestions = async () => {
+    try {
+      setIsLoadingSuggestions(true);
+      const res = await fetch('https://api.metausosmed.my.id/api/v1/suggestions?limit=10', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await res.json();
+      if (result.success && result.data) {
+        setSuggestedStudents(result.data);
+      }
+    } catch (e) {
+      console.warn('Error fetching suggestions:', e);
+    } finally {
+      setIsLoadingSuggestions(false);
+    }
+  };
 
   React.useEffect(() => {
     if (searchQuery.trim().length === 0) {
@@ -110,59 +137,39 @@ export default function SearchScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <FlashList
-        data={MOMENTS}
-        keyExtractor={(item) => item.id}
-        numColumns={3}
-        renderItem={({ item }) => (
-          <TouchableOpacity style={styles.momentItem}>
-            <Image 
-              source={{ uri: item.image }} 
-              style={styles.momentImage} 
-              contentFit="cover"
-            />
-          </TouchableOpacity>
-        )}
-        ListHeaderComponent={
-          <>
-            <SearchHeader 
-              theme={theme}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              isLoading={isLoading}
-              isSearching={isSearching}
-              onSearch={performSearch}
-            />
-            {isSearching ? (
-              <SearchResultsSection 
-                theme={theme}
-                searchResults={searchResults}
-                isLoading={isLoading}
-                searchQuery={searchQuery}
-                router={router}
-                handleFollow={handleFollow}
-              />
-            ) : (
-              <>
-                <SuggestedSection 
-                  theme={theme}
-                  followingIds={followingIds}
-                  handleFollow={handleFollow}
-                  router={router}
-                />
-                <View style={styles.sectionHeader}>
-                  <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 15, marginTop: 10, marginBottom: 10 }]}>Momen Kampus</Text>
-                </View>
-              </>
-            )}
-          </>
-        }
-        // @ts-ignore - estimatedItemSize is required but reported as not existing by the current TS version
-        estimatedItemSize={COLUMN_WIDTH}
-        contentContainerStyle={{ paddingBottom: 100 }}
+    <ScrollView 
+      style={[styles.container, { backgroundColor: theme.background }]}
+      contentContainerStyle={{ paddingBottom: 100 }}
+      keyboardShouldPersistTaps="handled"
+    >
+      <SearchHeader 
+        theme={theme}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        isLoading={isLoading}
+        isSearching={isSearching}
+        onSearch={performSearch}
       />
-    </View>
+      {isSearching ? (
+        <SearchResultsSection 
+          theme={theme}
+          searchResults={searchResults}
+          isLoading={isLoading}
+          searchQuery={searchQuery}
+          router={router}
+          handleFollow={handleFollow}
+        />
+      ) : (
+        <SuggestedSection 
+          theme={theme}
+          followingIds={followingIds}
+          handleFollow={handleFollow}
+          router={router}
+          suggestedStudents={suggestedStudents}
+          isLoadingSuggestions={isLoadingSuggestions}
+        />
+      )}
+    </ScrollView>
   );
 }
 
@@ -259,44 +266,54 @@ const SearchResultsSection = ({ theme, searchResults, isLoading, searchQuery, ro
   </View>
 );
 
-const SuggestedSection = ({ theme, followingIds, handleFollow, router }: any) => (
+const SuggestedSection = ({ theme, followingIds, handleFollow, router, suggestedStudents, isLoadingSuggestions }: any) => (
   <View style={styles.section}>
     <View style={styles.sectionHeader}>
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Saran Untuk Anda</Text>
       <TouchableOpacity><Text style={{ color: theme.tint, fontWeight: '600' }}>Lihat Semua</Text></TouchableOpacity>
     </View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestedList}>
-      {SUGGESTED_STUDENTS.map((student) => {
-        const isFollowing = followingIds.has(student.id);
-        return (
-          <TouchableOpacity 
-            key={student.id} 
-            style={[styles.suggestedCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => router.push({
-              pathname: "/user/[id]",
-              params: { id: student.id, initialName: student.name, initialNim: '', initialAvatar: student.avatar }
-            } as any)}
-          >
-            <Image source={{ uri: student.avatar }} style={styles.suggestedAvatar} />
-            <Text style={[styles.suggestedName, { color: theme.text }]} numberOfLines={1}>{student.name}</Text>
-            <Text style={[styles.suggestedProdi, { color: theme.description }]} numberOfLines={1}>{student.prodi}</Text>
+      {isLoadingSuggestions ? (
+        [1, 2, 3].map((i) => <View key={i} style={[styles.suggestedCard, { backgroundColor: theme.card, borderColor: theme.border, opacity: 0.5, height: 160 }]} />)
+      ) : suggestedStudents && suggestedStudents.length > 0 ? (
+        suggestedStudents.map((student: any) => {
+          const id = student._id || student.id;
+          const name = student.nama || student.name || 'Mahasiswa';
+          const isFollowing = followingIds.has(id);
+          const avatar = getAvatarUrl(student);
+
+          return (
             <TouchableOpacity 
-              style={[
-                styles.followButton, 
-                { backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
-              ]}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleFollow(student.id);
-              }}
+              key={id} 
+              style={[styles.suggestedCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={() => router.push({
+                pathname: "/user/[id]",
+                params: { id: id, initialName: name, initialNim: student.nim || '', initialAvatar: avatar }
+              } as any)}
             >
-              <Text style={[styles.followButtonText, { color: isFollowing ? theme.text : '#FFF' }]}>
-                {isFollowing ? 'Mengikuti' : 'Ikuti'}
-              </Text>
+              <Image source={{ uri: avatar }} style={styles.suggestedAvatar} />
+              <Text style={[styles.suggestedName, { color: theme.text }]} numberOfLines={1}>{name}</Text>
+              <Text style={[styles.suggestedProdi, { color: theme.description }]} numberOfLines={1}>{student.program_studi || 'Mahasiswa'}</Text>
+              <TouchableOpacity 
+                style={[
+                  styles.followButton, 
+                  { backgroundColor: isFollowing ? theme.border + '80' : theme.tint }
+                ]}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleFollow(id);
+                }}
+              >
+                <Text style={[styles.followButtonText, { color: isFollowing ? theme.text : '#FFF' }]}>
+                  {isFollowing ? 'Mengikuti' : 'Ikuti'}
+                </Text>
+              </TouchableOpacity>
             </TouchableOpacity>
-          </TouchableOpacity>
-        );
-      })}
+          );
+        })
+      ) : (
+        <Text style={{ color: theme.description, paddingHorizontal: 15 }}>Belum ada saran pertemanan baru.</Text>
+      )}
     </ScrollView>
   </View>
 );

@@ -262,7 +262,7 @@ export default function ChatRoomScreen() {
           router.setParams({ id: result.data.conversation_id });
         }
       } else {
-        Alert.alert('Gagal', 'Pesan gagal dikirim');
+        Alert.alert('Gagal', result.message || 'Pesan gagal dikirim');
         // Remove optimistic message if failed
         setMessages(prev => prev.filter(m => m._id !== tempId));
         setInputText(currentText);

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Fe_Sosmed_metamedia",
+    "name": "META-U",
     "slug": "Fe_Sosmed_metamedia",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,9 +12,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#ffffff",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -45,7 +44,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#000000",
+            "image": "./assets/images/splash-icon.png"
           }
         }
       ],

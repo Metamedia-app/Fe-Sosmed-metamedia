@@ -1,4 +1,4 @@
-﻿import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { Platform, Alert } from 'react-native';
 import Constants from 'expo-constants';
 import { loadGoogleScript, loginRequestWeb } from '@/utils/googleAuth';
@@ -116,13 +116,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const response = await originalFetch.apply(this, args);
         if (response.status === 403) {
           
-          // --- CEK APAKAH INI ERROR KHUSUS GOOGLE LOGIN (JANGAN DIBLOKIR) ---
+          // --- CEK APAKAH INI ERROR KHUSUS ATAU VALIDASI RESOURCE ---
           try {
             const clone = response.clone();
             const body = await clone.json();
-            if (body && body.errorCode === 'ACCOUNT_NOT_LINKED') {
-              // Biarkan lolos agar ditangkap oleh halaman Login
-              return response;
+            
+            if (body) {
+              // Lewatkan error sinkronisasi akun Google
+              if (body.errorCode === 'ACCOUNT_NOT_LINKED') {
+                return response;
+              }
+              
+              // Lewatkan error dari endpoint chat (pesan kasar / grup arsip / dilarang)
+              // Biarkan komponen yang menampilkan `body.message` dari Backend langsung
+              if (response.url && (response.url.includes('/chat') || response.url.includes('/messages') || response.url.includes('/posts') || response.url.includes('/comments'))) {
+                return response; 
+              }
             }
           } catch (e) {
             // Abaikan jika bukan JSON

@@ -668,7 +668,25 @@ export default function CommunityChatScreen() {
                     const isMe = member._id === user?._id;
 
                     return (
-                      <View key={member._id} style={styles.memberItem}>
+                      <TouchableOpacity 
+                        key={member._id} 
+                        style={styles.memberItem}
+                        onPress={() => {
+                          setIsDetailVisible(false); // Tutup modal dulu
+                          // Beri sedikit waktu untuk animasi modal tertutup
+                          setTimeout(() => {
+                            router.push({
+                              pathname: "/user/[id]",
+                              params: { 
+                                id: member._id, 
+                                initialName: member.nama, 
+                                initialNim: member.nim,
+                                initialAvatar: member.avatar_url || ''
+                              }
+                            } as any);
+                          }, 100);
+                        }}
+                      >
                         {member.avatar_url ? (
                           <SecureMedia url={member.avatar_url} token={token} style={styles.memberAvatar} />
                         ) : (
@@ -691,7 +709,10 @@ export default function CommunityChatScreen() {
                         {isAdmin && !isMe && !isMemberAdmin && (
                           <TouchableOpacity 
                             style={styles.removeMemberBtn} 
-                            onPress={() => handleRemoveMember(member._id, member.nama)}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              handleRemoveMember(member._id, member.nama);
+                            }}
                             disabled={isRemovingMember === member._id}
                           >
                             {isRemovingMember === member._id ? (
@@ -701,7 +722,7 @@ export default function CommunityChatScreen() {
                             )}
                           </TouchableOpacity>
                         )}
-                      </View>
+                      </TouchableOpacity>
                     );
                   })}
                 </View>

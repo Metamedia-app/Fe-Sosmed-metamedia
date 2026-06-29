@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Keyboard,
@@ -451,7 +451,7 @@ export default function GroupChatRoomScreen() {
           router.setParams({ id: result.data.conversation_id });
         }
       } else {
-        Alert.alert('Gagal', 'Pesan gagal dikirim');
+        Alert.alert('Gagal', result.message || 'Pesan gagal dikirim');
         // Remove optimistic message if failed
         setMessages(prev => prev.filter(m => m._id !== tempId));
         setInputText(currentText);

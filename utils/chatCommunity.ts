@@ -1,4 +1,4 @@
-﻿// [OLD API BACKUP]: const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/chat/communities';
+// [OLD API BACKUP]: const BASE_URL = 'https://besosmed-production.up.railway.app/api/v1/chat/communities';
 const BASE_URL = 'https://api.metausosmed.my.id/api/v1/chat/communities';
 
 export interface Community {
@@ -202,12 +202,14 @@ export const communityService = {
   // DELETE /api/v1/chat/communities/messages/{messageId}
   deleteMessage: async (token: string, messageId: string, type: 'me' | 'everyone') => {
     try {
-      const response = await fetch(`${BASE_URL}/messages/${messageId}?type=${type}`, {
+      const response = await fetch(`${BASE_URL}/messages/${messageId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'accept': 'application/json'
-        }
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ type })
       });
       return await response.json();
     } catch (error) {
