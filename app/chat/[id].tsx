@@ -541,7 +541,7 @@ export default function ChatRoomScreen() {
         {selectedImage && (
           <View style={[styles.previewContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
             <View style={styles.previewImageWrapper}>
-              <SecureMedia url={selectedImage.uri} token={token} style={styles.previewImage} />
+              <Image source={{ uri: selectedImage.uri }} style={styles.previewImage} resizeMode="cover" />
               <TouchableOpacity 
                 style={styles.removePreviewButton}
                 onPress={() => setSelectedImage(null)}

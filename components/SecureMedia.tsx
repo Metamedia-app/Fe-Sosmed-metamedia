@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, StyleSheet, StyleProp, ImageStyle } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { Image, ImageProps } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { Colors } from '@/constants/theme';
@@ -21,12 +22,19 @@ function SecureVideo({ fullUrl, token, style, contentFit, showControls }: any) {
     ...(fullUrl.startsWith('file://') ? {} : { headers: { 'Authorization': `Bearer ${token}` } })
   };
 
+  const isFocused = useIsFocused();
   const player = useVideoPlayer(videoSource, player => {
     player.loop = showControls;
     if (!showControls) {
       player.pause();
     }
   });
+
+  useEffect(() => {
+    if (!isFocused && player) {
+      player.pause();
+    }
+  }, [isFocused, player]);
 
   return (
     <View style={[style, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', overflow: 'hidden' }]}>

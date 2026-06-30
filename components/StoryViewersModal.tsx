@@ -15,9 +15,13 @@ import {
     TouchableOpacity,
     View,
     TouchableWithoutFeedback,
-    TextInput
+    TextInput,
+    Alert
 } from 'react-native';
 import { getAvatarUrl } from '@/utils/avatar';
+import { getFollowing, followUser } from '@/utils/follow';
+import { useRouter } from 'expo-router';
+import { getOrCreateConversation } from '@/utils/chat';
 
 interface StoryViewersModalProps {
   isVisible: boolean;
@@ -28,13 +32,16 @@ interface StoryViewersModalProps {
 export default function StoryViewersModal({ isVisible, storyId, onClose }: StoryViewersModalProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
-  const { token } = useAuth();
+  const { token, user: currentUser } = useAuth();
   const { lastEvent } = useSocket();
+  const router = useRouter();
   
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [totalViews, setTotalViews] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [followingStates, setFollowingStates] = useState<Record<string, boolean>>({});
+  const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (isVisible && storyId && token) {
@@ -71,10 +78,24 @@ export default function StoryViewersModal({ isVisible, storyId, onClose }: Story
     if (!storyId || !token) return;
     setIsLoading(true);
     try {
-      const result = await storyService.getViewers(token, storyId);
+      const [result, followingRes] = await Promise.all([
+        storyService.getViewers(token, storyId),
+        getFollowing(currentUser?._id || '', token)
+      ]);
+      
       if (result.success && result.data) {
         setViewers(result.data.viewers);
         setTotalViews(result.data.total_views);
+        
+        const states: Record<string, boolean> = {};
+        if (followingRes.success) {
+          const myFollowingIds = new Set(followingRes.data.following.map((u: any) => u._id));
+          result.data.viewers.forEach((v: any) => {
+            const vid = v._id || v.id;
+            states[vid] = myFollowingIds.has(vid);
+          });
+        }
+        setFollowingStates(states);
       }
     } catch (error) {
       console.error('Fetch viewers error:', error);
@@ -86,6 +107,42 @@ export default function StoryViewersModal({ isVisible, storyId, onClose }: Story
   const filteredViewers = viewers.filter(v => 
     v.nama.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleFollowAction = async (viewer: Viewer) => {
+    if (!token) return;
+    const viewerId = viewer._id || (viewer as any).id;
+    if (viewerId === currentUser?._id) return;
+    
+    if (followingStates[viewerId]) {
+      // Already following -> Go to DM
+      setLoadingStates(prev => ({ ...prev, [viewerId]: true }));
+      const res = await getOrCreateConversation(viewerId, token);
+      setLoadingStates(prev => ({ ...prev, [viewerId]: false }));
+      
+      if (res.success && res.data?.conversation_id) {
+        onClose();
+        router.push({
+          pathname: `/chat/[id]`,
+          params: {
+            id: res.data.conversation_id,
+            recipientId: viewerId,
+            recipientName: viewer.nama,
+            recipientAvatar: getAvatarUrl(viewer, true)
+          }
+        } as any);
+      } else {
+        Alert.alert('Gagal', res.message || 'Gagal memulai percakapan');
+      }
+    } else {
+      // Not following -> Follow
+      setLoadingStates(prev => ({ ...prev, [viewerId]: true }));
+      const res = await followUser(viewerId, token);
+      if (res.success) {
+        setFollowingStates(prev => ({ ...prev, [viewerId]: true }));
+      }
+      setLoadingStates(prev => ({ ...prev, [viewerId]: false }));
+    }
+  };
 
   return (
     <Modal
@@ -134,7 +191,23 @@ export default function StoryViewersModal({ isVisible, storyId, onClose }: Story
               ) : filteredViewers.length > 0 ? (
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                   {filteredViewers.map((viewer, index) => (
-                    <View key={viewer._id || `viewer-${index}`} style={styles.viewerItem}>
+                    <TouchableOpacity 
+                      key={viewer._id || `viewer-${index}`} 
+                      style={styles.viewerItem}
+                      onPress={() => {
+                        onClose();
+                        router.push({
+                          pathname: "/user/[id]",
+                          params: { 
+                            id: viewer._id || (viewer as any).id,
+                            initialName: viewer.nama, 
+                            initialNim: viewer.nim, 
+                            initialAvatar: getAvatarUrl(viewer, true) 
+                          }
+                        } as any);
+                      }}
+                      activeOpacity={0.7}
+                    >
                       <Image 
                         source={{ uri: getAvatarUrl(viewer, true) }} 
                         style={styles.avatar} 
@@ -145,10 +218,35 @@ export default function StoryViewersModal({ isVisible, storyId, onClose }: Story
                           Melihat pada {new Date(viewer.viewed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </Text>
                       </View>
-                      <TouchableOpacity style={[styles.followButton, { borderColor: theme.border }]}>
-                        <Text style={[styles.followButtonText, { color: theme.text }]}>Profil</Text>
-                      </TouchableOpacity>
-                    </View>
+                      
+                      {(viewer._id || (viewer as any).id) !== currentUser?._id && (
+                        <TouchableOpacity 
+                          style={[
+                            styles.followButton, 
+                            { 
+                              backgroundColor: followingStates[viewer._id || (viewer as any).id] ? 'transparent' : theme.tint,
+                              borderColor: followingStates[viewer._id || (viewer as any).id] ? theme.border : theme.tint,
+                            }
+                          ]}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleFollowAction(viewer);
+                          }}
+                          disabled={loadingStates[viewer._id || (viewer as any).id]}
+                        >
+                          {loadingStates[viewer._id || (viewer as any).id] ? (
+                            <ActivityIndicator size="small" color={followingStates[viewer._id || (viewer as any).id] ? theme.text : '#fff'} />
+                          ) : (
+                            <Text style={[
+                              styles.followButtonText, 
+                              { color: followingStates[viewer._id || (viewer as any).id] ? theme.text : '#fff' }
+                            ]}>
+                              {followingStates[viewer._id || (viewer as any).id] ? 'Pesan' : 'Follow'}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
                   ))}
                 </ScrollView>
               ) : (

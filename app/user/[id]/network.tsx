@@ -9,14 +9,18 @@ import { getAvatarUrl } from '@/utils/avatar';
 import { getFollowers, FollowUser, followUser, unfollowUser, getFollowing, getOtherUserProfile } from '@/utils/follow';
 import { FollowListLayout } from '@/components/FollowListLayout';
 
-export default function FollowersScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+export default function NetworkScreen() {
+  const { id, initialTab = 'followers' } = useLocalSearchParams<{ id: string, initialTab?: 'followers' | 'following' | 'friends' }>();
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
   const { token, user: currentUser } = useAuth();
 
   const [users, setUsers] = useState<FollowUser[]>([]);
+  const [followersList, setFollowersList] = useState<FollowUser[]>([]);
+  const [followingList, setFollowingList] = useState<FollowUser[]>([]);
+  const [friendsList, setFriendsList] = useState<FollowUser[]>([]);
+  const [activeTab, setActiveTab] = useState<'followers' | 'following' | 'friends'>(initialTab);
   const [followingStates, setFollowingStates] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -44,35 +48,39 @@ export default function FollowersScreen() {
       }
 
       if (followersRes.success) {
-        const followersList = followersRes.data.followers || [];
-        setUsers(followersList);
+        const followersData = followersRes.data.followers || [];
+        setFollowersList(followersData);
         
-        // Determine which followers I am already following
+        // Following list
+        let followingData: FollowUser[] = [];
+        if (targetFollowingRes.success) {
+          followingData = targetFollowingRes.data.following || [];
+          setFollowingList(followingData);
+        }
+
+        // Friends list (Mutuals)
+        let friendsData: FollowUser[] = [];
+        if (targetFollowingRes.success) {
+          const targetFollowingIds = new Set(followingData.map((u: any) => u._id));
+          friendsData = followersData.filter((u: any) => targetFollowingIds.has(u._id));
+          setFriendsList(friendsData);
+        }
+
+        // Determine which of these people I am already following
         const states: Record<string, boolean> = {};
         if (myFollowingRes.success) {
           const myFollowing = myFollowingRes.data.following || [];
           const myFollowingIds = new Set(myFollowing.map((u: any) => u._id));
-          followersList.forEach((u: FollowUser) => {
+          [...followersData, ...followingData].forEach((u: FollowUser) => {
             states[u._id] = myFollowingIds.has(u._id);
           });
         }
         setFollowingStates(states);
 
-        // Update counts
-        const followersCount = followersList.length;
-        const followingCount = targetFollowingRes.success ? targetFollowingRes.data.following.length : 0;
-        
-        // Friends = mutual. Simplified: intersection of followers and following
-        let friendsCount = 0;
-        if (targetFollowingRes.success) {
-          const targetFollowingIds = new Set(targetFollowingRes.data.following.map((u: any) => u._id));
-          friendsCount = followersList.filter((u: any) => targetFollowingIds.has(u._id)).length;
-        }
-
         setCounts({
-          followers: followersCount,
-          following: followingCount,
-          friends: friendsCount
+          followers: followersData.length,
+          following: followingData.length,
+          friends: friendsData.length
         });
       }
     } catch (error) {
@@ -151,21 +159,27 @@ export default function FollowersScreen() {
     </TouchableOpacity>
   );
 
+  // Dynamic users based on activeTab
+  const getActiveUsers = () => {
+    if (activeTab === 'following') return followingList;
+    if (activeTab === 'friends') return friendsList;
+    return followersList;
+  };
+
   return (
     <FollowListLayout
-      users={users}
+      users={getActiveUsers()}
       followingStates={followingStates}
       loadingStates={loadingStates}
       onToggleFollow={handleToggleFollow}
-      activeTab="followers"
+      activeTab={activeTab}
       counts={counts}
       profileOwnerName={profileOwner?.nama || profileOwner?.nim || 'Profile'}
       isLoading={isLoading}
       isRefreshing={isRefreshing}
       onRefresh={onRefresh}
       onTabChange={(tab) => {
-        if (tab === 'following') router.replace(`/user/${id}/following`);
-        // Add friends/suggested if needed
+        setActiveTab(tab); // Instant switch using state!
       }}
       currentUserId={currentUser?._id || ''}
     />

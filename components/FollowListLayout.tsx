@@ -23,18 +23,17 @@ interface FollowListLayoutProps {
   followingStates: Record<string, boolean>;
   loadingStates: Record<string, boolean>;
   onToggleFollow: (userId: string) => Promise<void>;
-  activeTab: 'following' | 'followers' | 'friends' | 'suggested';
+  activeTab: 'following' | 'followers' | 'friends';
   counts: {
     following: number;
     followers: number;
     friends: number;
-    suggested?: number;
   };
   profileOwnerName: string;
   isLoading: boolean;
   isRefreshing: boolean;
   onRefresh: () => void;
-  onTabChange: (tab: 'following' | 'followers' | 'friends' | 'suggested') => void;
+  onTabChange: (tab: 'following' | 'followers' | 'friends') => void;
   currentUserId: string;
 }
 
@@ -62,7 +61,7 @@ export const FollowListLayout: React.FC<FollowListLayoutProps> = ({
     user.nim.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const renderTab = (id: 'following' | 'followers' | 'friends' | 'suggested', label: string, count: number) => {
+  const renderTab = (id: 'following' | 'followers' | 'friends', label: string, count: number) => {
     const isActive = activeTab === id;
     return (
       <TouchableOpacity 
@@ -134,9 +133,6 @@ export const FollowListLayout: React.FC<FollowListLayoutProps> = ({
               )}
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.menuBtn}>
-              <MoreHorizontal size={20} color={theme.description} />
-            </TouchableOpacity>
           </View>
         )}
       </TouchableOpacity>
@@ -158,20 +154,15 @@ export const FollowListLayout: React.FC<FollowListLayoutProps> = ({
           {profileOwnerName}
         </Text>
 
-        <TouchableOpacity style={styles.userAddBtn}>
-          <Menu size={24} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={styles.userAddBtn} />
       </View>
 
       <View style={[styles.content, { backgroundColor: theme.background }]}>
         {/* Tabs */}
         <View style={[styles.tabsContainer, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {renderTab('following', 'Following', counts.following)}
-            {renderTab('followers', 'Followers', counts.followers)}
-            {renderTab('friends', 'Friends', counts.friends)}
-            {renderTab('suggested', 'Suggested', counts.suggested || 0)}
-          </ScrollView>
+          {renderTab('following', 'Following', counts.following)}
+          {renderTab('followers', 'Followers', counts.followers)}
+          {renderTab('friends', 'Friends', counts.friends)}
         </View>
 
         {/* Search Bar */}
@@ -279,7 +270,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
   },
   tabItem: {
-    paddingHorizontal: 20,
+    flex: 1,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',

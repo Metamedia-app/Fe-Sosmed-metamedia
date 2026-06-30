@@ -457,14 +457,14 @@ export default function UserProfileScreen() {
         <View style={styles.statsRow}>
           <TouchableOpacity 
             style={styles.statBox}
-            onPress={() => router.push(`/user/${id}/following` as any)}
+            onPress={() => router.push(`/user/${id}/network?initialTab=following` as any)}
           >
             <Text style={[styles.statNumber, { color: theme.text }]}>{followingCount}</Text>
             <Text style={[styles.statLabel, { color: theme.description }]}>Mengikuti</Text>
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.statBox}
-            onPress={() => router.push(`/user/${id}/followers` as any)}
+            onPress={() => router.push(`/user/${id}/network?initialTab=followers` as any)}
           >
             <Text style={[styles.statNumber, { color: theme.text }]}>{followersCount}</Text>
             <Text style={[styles.statLabel, { color: theme.description }]}>Followers</Text>

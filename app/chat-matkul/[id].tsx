@@ -781,6 +781,21 @@ export default function GroupChatRoomScreen() {
           />
         </View>
 
+        {/* Selected Image Preview */}
+        {selectedImage && (
+          <View style={[styles.previewContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
+            <View style={styles.previewImageWrapper}>
+              <Image source={{ uri: selectedImage.uri }} style={styles.previewImage} resizeMode="cover" />
+              <TouchableOpacity
+                style={styles.removePreviewButton}
+                onPress={() => setSelectedImage(null)}
+              >
+                <Text style={styles.removePreviewText}>×</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {groupDetail?.is_muted && !isDosen ? (
           <View style={[styles.mutedContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
             <Lock size={20} color={theme.description} />
@@ -2367,5 +2382,36 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     marginTop: 15,
+  },
+  previewContainer: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+  },
+  previewImageWrapper: {
+    position: 'relative',
+    alignSelf: 'flex-start',
+  },
+  previewImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+  },
+  removePreviewButton: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removePreviewText: {
+    color: '#FFF',
+    fontSize: 16,
+    lineHeight: 18,
+    fontWeight: 'bold',
   },
 });

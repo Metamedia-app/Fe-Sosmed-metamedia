@@ -12,6 +12,7 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { MessageCircle, MoreHorizontal, Repeat, Share2, ThumbsUp, Volume2, VolumeX } from 'lucide-react-native';
+import { useIsFocused } from '@react-navigation/native';
 import React, { useState, useEffect, useRef } from 'react';
 import { Alert, Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
@@ -95,15 +96,17 @@ const PostMediaItem = ({ media, theme, isVisible = true }: { media: PostMedia; t
     }
   }, [isMuted, player]);
 
+  const isFocused = useIsFocused();
+  
   React.useEffect(() => {
     if (isVideo && player) {
-      if (isVisible) {
+      if (isVisible && isFocused) {
         player.play();
       } else {
         player.pause();
       }
     }
-  }, [isVisible, isVideo, player]);
+  }, [isVisible, isFocused, isVideo, player]);
 
   if (isVideo) {
     return (
