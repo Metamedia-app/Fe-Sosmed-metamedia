@@ -11,6 +11,7 @@ import { SocketProvider } from '@/context/SocketContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { pushNotificationService } from '@/utils/pushNotification';
 import GlobalAlert from '@/components/GlobalAlert';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -140,19 +141,21 @@ export default function RootLayout() {
     <VersionChecker>
       <AuthProvider>
         <SocketProvider>
-          <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-            <Stack>
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen name="user/[id]" options={{ headerShown: false }} />
-              <Stack.Screen name="user/[id]/followers" options={{ headerShown: false }} />
-              <Stack.Screen name="user/[id]/following" options={{ headerShown: false }} />
-              <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
-              <Stack.Screen name="settings" options={{ title: 'Pengaturan', headerBackTitle: 'Kembali' }} />
-              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-            </Stack>
-            <GlobalAlert />
-            <StatusBar style="auto" hidden={Platform.OS === 'android'} />
-          </ThemeProvider>
+          <KeyboardProvider>
+            <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+              <Stack>
+                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                <Stack.Screen name="user/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="user/[id]/followers" options={{ headerShown: false }} />
+                <Stack.Screen name="user/[id]/following" options={{ headerShown: false }} />
+                <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
+                <Stack.Screen name="settings" options={{ title: 'Pengaturan', headerBackTitle: 'Kembali' }} />
+                <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+              </Stack>
+              <GlobalAlert />
+              <StatusBar style="auto" hidden={Platform.OS === 'android'} />
+            </ThemeProvider>
+          </KeyboardProvider>
         </SocketProvider>
       </AuthProvider>
     </VersionChecker>

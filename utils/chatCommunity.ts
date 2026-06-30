@@ -77,9 +77,12 @@ export const communityService = {
   },
 
   // GET /api/v1/chat/communities/{id}/messages
-  getCommunityMessages: async (token: string, id: string, limit = 30, skip = 0) => {
+  getCommunityMessages: async (token: string, id: string, limit = 30, before?: string) => {
     try {
-      const response = await fetch(`${BASE_URL}/${id}/messages?limit=${limit}&skip=${skip}`, {
+      let url = `${BASE_URL}/${id}/messages?limit=${limit}`;
+      if (before) url += `&before=${before}`;
+      
+      const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}`, 'accept': 'application/json' }
       });
       return await response.json();
@@ -232,6 +235,41 @@ export const communityService = {
     } catch (error) {
       console.error('Error removing community member:', error);
       return { success: false, message: 'Gagal mengeluarkan anggota' };
+    }
+  },
+
+  // PATCH /api/v1/chat/communities/{id}
+  editCommunity: async (token: string, id: string, formData: FormData) => {
+    try {
+      const response = await fetch(`${BASE_URL}/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'accept': 'application/json'
+        },
+        body: formData
+      });
+      return await response.json();
+    } catch (error) {
+      console.error('Error editing community:', error);
+      return { success: false, message: 'Gagal memperbarui komunitas' };
+    }
+  },
+
+  // POST /api/v1/chat/communities/{id}/leave
+  leaveCommunity: async (token: string, id: string) => {
+    try {
+      const response = await fetch(`${BASE_URL}/${id}/leave`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'accept': 'application/json'
+        }
+      });
+      return await response.json();
+    } catch (error) {
+      console.error('Error leaving community:', error);
+      return { success: false, message: 'Gagal keluar dari komunitas' };
     }
   },
 

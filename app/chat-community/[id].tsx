@@ -1,17 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
-  KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Keyboard,
+  Platform, ActivityIndicator, Alert, Keyboard, KeyboardAvoidingView,
   Modal, ScrollView, Image, LayoutAnimation, UIManager, TouchableWithoutFeedback
 } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { communityService, Community, CommunityMessage } from '@/utils/chatCommunity';
-import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, MoreVertical, X, Users, Camera, Trash2, Smile, User, UserPlus, UserMinus, AlertTriangle } from 'lucide-react-native';
+import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, MoreVertical, X, Users, Camera, Trash2, Smile, User, UserPlus, UserMinus, AlertTriangle, Type as KeyboardIcon } from 'lucide-react-native';
 import SecureMedia from '@/components/SecureMedia';
+import CustomCamera from '@/components/CustomCamera';
+import MediaViewerModal from '@/components/MediaViewerModal';
+import { EmojiKeyboard } from 'rn-emoji-keyboard';
 import { format } from 'date-fns';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -40,12 +45,75 @@ export default function CommunityChatScreen() {
   const [isInviting, setIsInviting] = useState(false);
   const [isRemovingMember, setIsRemovingMember] = useState<string | null>(null);
   const [isDeletingCommunity, setIsDeletingCommunity] = useState(false);
+  const [isLeavingCommunity, setIsLeavingCommunity] = useState(false);
+  
+  // Edit Community State
+  const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+  const [isEditingCommunity, setIsEditingCommunity] = useState(false);
+  const [isCameraVisible, setIsCameraVisible] = useState(false);
+  const [isEmojiPickerVisible, setIsEmojiPickerVisible] = useState(false);
+  
+  // Track OS keyboard height to make Emoji Picker exactly the same height
+  const [keyboardHeight, setKeyboardHeight] = useState(320);
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    return () => showSub.remove();
+  }, []);
+
+  // WhatsApp-style smooth keyboard controller
+  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+
+  // Pagination
+  const PAGE_SIZE = 30;
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [editAvatar, setEditAvatar] = useState<any>(null);
+  const [editCover, setEditCover] = useState<any>(null);
   
   const isSendingRef = useRef(false);
   const flatListRef = useRef<FlatList>(null);
   const typingTimeoutRef = useRef<any>(null);
   const remoteTypingTimeouts = useRef<{[key: string]: any}>({});
   const inputAreaRef = useRef<View>(null);
+  const textInputRef = useRef<TextInput>(null);
+
+  // WhatsApp-style smooth keyboard controller
+  const { height: keyboardHeightAnim } = useReanimatedKeyboardAnimation();
+  const emojiHeightAnim = useSharedValue(0);
+
+  useEffect(() => {
+    const currentKbHeight = -keyboardHeightAnim.value;
+    if (isEmojiPickerVisible) {
+      if (currentKbHeight > 50) {
+        // Switching from Keyboard to Emoji: Snap instantly to prevent dip
+        emojiHeightAnim.value = keyboardHeight;
+      } else {
+        // Opening Emoji from closed state: Animate up
+        emojiHeightAnim.value = withTiming(keyboardHeight, { duration: 250 });
+      }
+    } else {
+      if (currentKbHeight > 50) {
+        // Switching from Emoji to Keyboard (keyboard is already up): Snap instantly
+        emojiHeightAnim.value = 0;
+      } else {
+        // Closing Emoji to home state: Animate down
+        emojiHeightAnim.value = withTiming(0, { duration: 250 });
+      }
+    }
+  }, [isEmojiPickerVisible, keyboardHeight]);
+
+  // Animated padding on the main container — pushes ALL content up smoothly
+  const animatedContainerStyle = useAnimatedStyle(() => {
+    const kbHeight = -keyboardHeightAnim.value;
+    // Perfect WhatsApp lock: takes the max so the input bar stays completely stationary during swaps
+    return {
+      paddingBottom: Math.max(kbHeight, emojiHeightAnim.value)
+    };
+  });
 
   const typingStatusText = useMemo(() => {
     const users = Object.values(typingUsers);
@@ -55,18 +123,58 @@ export default function CommunityChatScreen() {
     return `${users[0]}, ${users[1]} dan ${users.length - 2} lainnya sedang mengetik...`;
   }, [typingUsers]);
 
-  const fetchMessages = useCallback(async () => {
-    if (!token || !id) return;
-    setIsLoading(true);
-    const result = await communityService.getCommunityMessages(token, id as string);
-    if (result.success) {
-      const sorted = result.data.sort((a: any, b: any) => 
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      setMessages(sorted || []);
+  const fetchChatMessages = useCallback(async () => {
+    if (!token || !id || id === 'new') {
+      setIsLoading(false);
+      return;
     }
-    setIsLoading(false);
+    
+    try {
+      const result = await communityService.getCommunityMessages(token, id as string, PAGE_SIZE);
+      if (result.success) {
+        // Sort oldest → newest (index 0 = oldest), then reverse for FlatList inverted
+        const sorted = result.data.sort((a: any, b: any) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        
+        setMessages(unique.reverse()); // Reverse for inverted FlatList
+        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+      }
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, [id, token]);
+
+  // Load older messages from BE when scrolled to top
+  const loadMoreMessages = useCallback(async () => {
+    if (isLoadingMore || !hasMore || messages.length === 0) return;
+    setIsLoadingMore(true);
+    
+    // The last item in our inverted list is the oldest message currently rendered
+    const oldestMessageId = messages[messages.length - 1]?._id;
+    
+    try {
+      const result = await communityService.getCommunityMessages(token, id as string, PAGE_SIZE, oldestMessageId);
+      if (result.success && result.data && result.data.length > 0) {
+        const sorted = result.data.sort((a: any, b: any) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        
+        setMessages(prev => [...prev, ...unique.reverse()]);
+        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+      } else {
+        setHasMore(false);
+      }
+    } catch (error) {
+      console.error('Error loading more messages:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMore, messages, id, token]);
 
   const fetchDetail = useCallback(async () => {
     if (!token || !id) return;
@@ -77,45 +185,13 @@ export default function CommunityChatScreen() {
   }, [id, token]);
 
   useEffect(() => {
-    fetchMessages();
+    fetchChatMessages();
     fetchDetail();
     if (token && id) {
       communityService.markAsRead(token, id as string);
     }
-  }, [fetchMessages, fetchDetail, id, token]);
-
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  useEffect(() => {
-    const showSubscription = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      (e) => {
-        if (isDetailVisible) return;
-        LayoutAnimation.configureNext({
-          duration: 300,
-          create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-          update: { type: LayoutAnimation.Types.easeInEaseOut },
-        });
-        setKeyboardHeight(e.endCoordinates.height);
-      }
-    );
-    const hideSubscription = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        LayoutAnimation.configureNext({
-          duration: 250,
-          update: { type: LayoutAnimation.Types.easeInEaseOut },
-        });
-        setKeyboardHeight(0);
-      }
-    );
-
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, [isDetailVisible]);
-
+  }, [fetchChatMessages, fetchDetail, id, token]);
+  
   // Real-time integration
   useEffect(() => {
     if (!socket || !id) return;
@@ -250,7 +326,7 @@ export default function CommunityChatScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ['images', 'videos'],
       quality: 0.8,
     });
 
@@ -258,6 +334,8 @@ export default function CommunityChatScreen() {
       setSelectedImage(result.assets[0]);
     }
   };
+
+
 
   const handleSendMessage = async () => {
     if ((!inputText.trim() && !selectedImage) || isSendingRef.current || !token || !id) return;
@@ -409,6 +487,84 @@ export default function CommunityChatScreen() {
     );
   };
 
+  const handleLeaveCommunity = () => {
+    Alert.alert(
+      "Keluar Komunitas",
+      "Apakah Anda yakin ingin keluar dari komunitas ini?",
+      [
+        { text: "Batal", style: "cancel" },
+        { 
+          text: "Keluar", 
+          style: "destructive",
+          onPress: async () => {
+            if (!token || !id) return;
+            setIsLeavingCommunity(true);
+            const result = await communityService.leaveCommunity(token, id as string);
+            if (result.success) {
+              Alert.alert('Berhasil', result.message || 'Anda telah keluar dari komunitas.');
+              setIsDetailVisible(false);
+              router.replace('/(tabs)/chat');
+            } else {
+              Alert.alert('Gagal', result.message || 'Gagal keluar dari komunitas');
+            }
+            setIsLeavingCommunity(false);
+          }
+        }
+      ]
+    );
+  };
+
+  const openEditModal = () => {
+    if (communityDetail) {
+      setEditName(communityDetail.name || '');
+      setEditDesc(communityDetail.description || '');
+      setEditAvatar(null);
+      setIsEditModalVisible(true);
+    }
+  };
+
+  const handlePickEditAvatar = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permissionResult.granted === false) {
+      Alert.alert('Izin Ditolak', 'Dibutuhkan akses ke galeri.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setEditAvatar(result.assets[0]);
+    }
+  };
+
+  const handleEditCommunity = async () => {
+    if (!editName.trim() || !token || !id) return;
+    setIsEditingCommunity(true);
+    
+    const formData = new FormData();
+    formData.append('name', editName.trim());
+    formData.append('description', editDesc.trim());
+    
+    if (editAvatar) {
+      const filename = editAvatar.uri.split('/').pop() || `avatar-${Date.now()}.png`;
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1]}` : `image/jpeg`;
+      // @ts-ignore
+      formData.append('avatar', { uri: editAvatar.uri, name: filename, type });
+    }
+
+    const result = await communityService.editCommunity(token, id as string, formData);
+    if (result.success) {
+      Alert.alert('Berhasil', result.message || 'Komunitas berhasil diperbarui');
+      setIsEditModalVisible(false);
+      fetchDetail(); 
+    } else {
+      Alert.alert('Gagal', result.message || 'Gagal memperbarui komunitas');
+    }
+    setIsEditingCommunity(false);
+  };
+
   const renderMessage = ({ item }: { item: any }) => {
     const isMe = item.sender_id?._id === user?._id || item.sender_id === user?._id;
     const time = format(new Date(item.createdAt), 'HH:mm');
@@ -434,15 +590,19 @@ export default function CommunityChatScreen() {
         >
           {item.attachments && item.attachments.length > 0 && (
             <View style={styles.attachmentsContainer}>
-              {item.attachments.map((att: any, idx: number) => (
-                <SecureMedia 
-                  key={idx} 
-                  url={att.url} 
-                  token={token} 
-                  style={styles.attachmentImage} 
-                  contentFit="cover"
-                />
-              ))}
+              {item.attachments.map((att: any, idx: number) => {
+                const mediaUrl = att.url || att.file_url;
+                return mediaUrl ? (
+                  <TouchableOpacity key={idx} activeOpacity={0.85} onPress={() => setViewerUrl(mediaUrl)}>
+                    <SecureMedia 
+                      url={mediaUrl} 
+                      token={token} 
+                      style={styles.attachmentImage} 
+                      contentFit="cover"
+                    />
+                  </TouchableOpacity>
+                ) : null;
+              })}
             </View>
           )}
           <View style={{ position: 'relative' }}>
@@ -470,15 +630,10 @@ export default function CommunityChatScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background, paddingBottom: isDetailVisible ? 0 : Math.max(0, keyboardHeight) }]}>
+    <Animated.View style={[styles.container, { backgroundColor: theme.background }, animatedContainerStyle]}>
       <Stack.Screen options={{ headerShown: false }} />
       
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-        enabled={!isDetailVisible}
-      >
+      <View style={{ flex: 1 }}>
         <View style={{ flex: 1 }}>
           {/* Header */}
           <View style={[styles.header, { backgroundColor: theme.card, borderBottomColor: theme.border, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3 }]}>
@@ -506,11 +661,20 @@ export default function CommunityChatScreen() {
           <FlatList
             ref={flatListRef}
             data={messages}
-            keyExtractor={(item) => item._id}
+            keyExtractor={(item, index) => item._id || index.toString()}
             renderItem={renderMessage}
             inverted
             contentContainerStyle={styles.messagesList}
             showsVerticalScrollIndicator={false}
+            onEndReached={loadMoreMessages}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={() => (
+              isLoadingMore ? (
+                <View style={{ paddingVertical: 20 }}>
+                  <ActivityIndicator size="small" color={theme.tint} />
+                </View>
+              ) : null
+            )}
           />
         </View>
 
@@ -530,18 +694,40 @@ export default function CommunityChatScreen() {
         )}
 
         {/* Input Area */}
-        <View style={[styles.inputContainer, { backgroundColor: theme.background, borderTopColor: theme.border, paddingBottom: Platform.OS === 'ios' ? 25 : (keyboardHeight > 0 ? 10 : 0) }]}>
+        <View style={[styles.inputContainer, { backgroundColor: theme.background, borderTopColor: theme.border, paddingBottom: Platform.OS === 'ios' ? 25 : 10 }]}>
           <View style={[styles.inputWrapper, { backgroundColor: theme.card }]}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Smile size={24} color={theme.description} />
+            <TouchableOpacity 
+              style={styles.iconButton} 
+              onPress={() => { 
+                if (isEmojiPickerVisible) {
+                  // Trick WhatsApp: focus keyboard first, hide emoji picker AFTER keyboard has risen
+                  textInputRef.current?.focus();
+                  setTimeout(() => setIsEmojiPickerVisible(false), 250);
+                } else {
+                  Keyboard.dismiss(); 
+                  setIsEmojiPickerVisible(true); 
+                }
+              }}
+            >
+              {isEmojiPickerVisible ? (
+                <KeyboardIcon size={24} color={theme.description} />
+              ) : (
+                <Smile size={24} color={theme.description} />
+              )}
             </TouchableOpacity>
 
             <TextInput
+              ref={textInputRef}
               style={[styles.input, { color: theme.text }]}
               placeholder="Message"
               placeholderTextColor={theme.description}
               value={inputText}
               onChangeText={handleTyping}
+              onFocus={() => {
+                if (isEmojiPickerVisible) {
+                  setTimeout(() => setIsEmojiPickerVisible(false), 250);
+                }
+              }}
               multiline
               maxLength={1000}
             />
@@ -549,7 +735,7 @@ export default function CommunityChatScreen() {
             <TouchableOpacity style={styles.iconButton} onPress={handlePickImage}>
               <Paperclip size={20} color={theme.description} style={{ transform: [{ rotate: '-45deg' }] }} />
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]}>
+            <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]} onPress={() => setIsCameraVisible(true)}>
               <Camera size={20} color={theme.description} />
             </TouchableOpacity>
           </View>
@@ -566,7 +752,43 @@ export default function CommunityChatScreen() {
             )}
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+      </View>
+        
+        {/* Emoji Picker */}
+        {isEmojiPickerVisible && (
+          <View style={{ position: 'absolute', bottom: 0, height: keyboardHeight, width: '100%', backgroundColor: theme.card, zIndex: 100 }}>
+            <EmojiKeyboard
+              onEmojiSelected={(emojiObject) => {
+                setInputText((prev) => prev + emojiObject.emoji);
+              }}
+              theme={{
+                knob: theme.tint,
+                container: theme.card,
+                header: theme.text,
+                skinTonesContainer: theme.background,
+                category: {
+                  icon: theme.description,
+                  iconActive: theme.tint,
+                  container: theme.background,
+                  containerActive: theme.card,
+                },
+              }}
+            />
+          </View>
+        )}
+
+      <CustomCamera 
+        visible={isCameraVisible} 
+        onClose={() => setIsCameraVisible(false)} 
+        onCapture={(asset) => setSelectedImage(asset)} 
+      />
+
+      <MediaViewerModal 
+        visible={!!viewerUrl} 
+        url={viewerUrl} 
+        token={token} 
+        onClose={() => setViewerUrl(null)} 
+      />
 
       {/* Detail Modal (Floating Card Style) */}
       <Modal
@@ -727,10 +949,40 @@ export default function CommunityChatScreen() {
                   })}
                 </View>
 
-                {/* Danger Zone */}
+                {/* Leave Community (For Members) */}
+                {(communityDetail?.creator?._id !== user?._id && communityDetail?.creator_id?._id !== user?._id) && (
+                  <View style={[styles.section, { borderTopColor: theme.border, marginBottom: 40 }]}>
+                    <Text style={[styles.sectionTitle, { color: theme.error || '#F44336' }]}>Tindakan</Text>
+                    <TouchableOpacity 
+                      style={[styles.deleteCommunityBtn, { borderColor: theme.error || '#F44336' }]}
+                      onPress={handleLeaveCommunity}
+                      disabled={isLeavingCommunity}
+                    >
+                      {isLeavingCommunity ? (
+                        <ActivityIndicator size="small" color={theme.error || '#F44336'} />
+                      ) : (
+                        <>
+                          <UserMinus size={20} color={theme.error || '#F44336'} />
+                          <Text style={[styles.deleteCommunityText, { color: theme.error || '#F44336' }]}>Keluar dari Komunitas</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Danger Zone (For Creators) */}
                 {(communityDetail?.creator?._id === user?._id || communityDetail?.creator_id?._id === user?._id) && (
                   <View style={[styles.section, { borderTopColor: theme.border, marginBottom: 40 }]}>
-                    <Text style={[styles.sectionTitle, { color: theme.error || '#F44336' }]}>Zona Bahaya</Text>
+                    <Text style={[styles.sectionTitle, { color: theme.error || '#F44336' }]}>Zona Bahaya & Pengaturan</Text>
+                    
+                    <TouchableOpacity 
+                      style={[styles.deleteCommunityBtn, { borderColor: theme.tint, marginBottom: 15 }]}
+                      onPress={openEditModal}
+                    >
+                      <Camera size={20} color={theme.tint} />
+                      <Text style={[styles.deleteCommunityText, { color: theme.tint }]}>Edit Komunitas</Text>
+                    </TouchableOpacity>
+
                     <TouchableOpacity 
                       style={[styles.deleteCommunityBtn, { borderColor: theme.error || '#F44336' }]}
                       onPress={handleDeleteCommunity}
@@ -759,7 +1011,66 @@ export default function CommunityChatScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+
+      {/* Edit Community Modal */}
+      <Modal visible={isEditModalVisible} transparent animationType="slide" onRequestClose={() => setIsEditModalVisible(false)}>
+        <View style={styles.floatingModalOverlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
+            <View style={[styles.floatingCard, { backgroundColor: theme.card, maxHeight: '80%', width: '90%', borderRadius: 20, overflow: 'hidden' }]}>
+              <View style={[styles.header, { borderBottomColor: theme.border, paddingVertical: 15, paddingHorizontal: 20 }]}>
+                <Text style={[styles.headerName, { color: theme.text, flex: 1 }]}>Edit Komunitas</Text>
+                <TouchableOpacity onPress={() => setIsEditModalVisible(false)}>
+                  <X size={24} color={theme.text} />
+                </TouchableOpacity>
+              </View>
+              
+              <ScrollView style={{ padding: 20 }} showsVerticalScrollIndicator={false}>
+                <TouchableOpacity style={{ alignSelf: 'center', alignItems: 'center', marginBottom: 20 }} onPress={handlePickEditAvatar}>
+                  {editAvatar ? (
+                    <Image source={{ uri: editAvatar.uri }} style={{ width: 100, height: 100, borderRadius: 50 }} />
+                  ) : communityDetail?.avatar_url ? (
+                    <SecureMedia url={communityDetail.avatar_url} token={token} style={{ width: 100, height: 100, borderRadius: 50 }} />
+                  ) : (
+                    <View style={{ width: 100, height: 100, borderRadius: 50, backgroundColor: theme.border, justifyContent: 'center', alignItems: 'center' }}>
+                      <Camera size={30} color={theme.description} />
+                    </View>
+                  )}
+                  <Text style={{ color: theme.tint, marginTop: 10, fontWeight: 'bold' }}>Ganti Foto</Text>
+                </TouchableOpacity>
+
+                <Text style={{ color: theme.description, marginBottom: 5, fontSize: 12 }}>Nama Komunitas</Text>
+                <TextInput 
+                  style={[{ backgroundColor: theme.background, color: theme.text, padding: 12, borderRadius: 8, marginBottom: 15, borderWidth: 1, borderColor: theme.border }]}
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="Nama Komunitas..."
+                  placeholderTextColor={theme.description}
+                />
+
+                <Text style={{ color: theme.description, marginBottom: 5, fontSize: 12 }}>Deskripsi</Text>
+                <TextInput 
+                  style={[{ backgroundColor: theme.background, color: theme.text, padding: 12, borderRadius: 8, marginBottom: 30, height: 100, borderWidth: 1, borderColor: theme.border }]}
+                  value={editDesc}
+                  onChangeText={setEditDesc}
+                  multiline
+                  textAlignVertical="top"
+                  placeholder="Ceritakan tentang komunitas ini..."
+                  placeholderTextColor={theme.description}
+                />
+
+                <TouchableOpacity 
+                  style={{ backgroundColor: theme.tint, width: '100%', borderRadius: 8, padding: 15, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', marginBottom: 20 }}
+                  onPress={handleEditCommunity}
+                  disabled={isEditingCommunity}
+                >
+                  {isEditingCommunity ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Simpan Perubahan</Text>}
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+    </Animated.View>
   );
 }
 

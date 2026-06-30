@@ -25,10 +25,13 @@ export const getMyGroups = async (token: string) => {
   }
 };
 
-export const getGroupMessages = async (conversationId: string, token: string) => {
+export const getGroupMessages = async (conversationId: string, token: string, limit: number = 30, before?: string) => {
   try {
-    console.log(`[API ChatMatkul] Fetching messages for group: ${conversationId}`);
-    const response = await fetch(`${BASE_URL}/chat-matkul/messages/${conversationId}`, {
+    let url = `${BASE_URL}/chat-matkul/messages/${conversationId}?limit=${limit}`;
+    if (before) url += `&before=${before}`;
+    
+    console.log(`[API ChatMatkul] Fetching messages for group: ${conversationId}, before: ${before || 'none'}`);
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Accept': '*/*',

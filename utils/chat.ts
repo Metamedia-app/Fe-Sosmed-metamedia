@@ -63,10 +63,15 @@ export const getUnreadSummary = async (token: string) => {
   }
 };
 
-export const getMessages = async (conversationId: string, token: string) => {
+export const getMessages = async (conversationId: string, token: string, limit: number = 30, before?: string) => {
   try {
-    console.log(`[API Chat] Fetching messages for conversation: ${conversationId}`);
-    const response = await fetch(`${BASE_URL}/chat/conversations/${conversationId}/messages`, {
+    let url = `${BASE_URL}/chat/conversations/${conversationId}/messages?limit=${limit}`;
+    if (before) {
+      url += `&before=${before}`;
+    }
+    
+    console.log(`[API Chat] Fetching messages for conversation: ${conversationId}, before: ${before || 'none'}`);
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Accept': '*/*',

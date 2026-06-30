@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Alert, Keyboard, Animated } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/theme';
@@ -21,7 +21,7 @@ export default function LoginScreen() {
   const [countdown, setCountdown] = useState(0);
 
   // Countdown timer for rate limit
-  React.useEffect(() => {
+  useEffect(() => {
     let timer: NodeJS.Timeout;
     if (countdown > 0) {
       timer = setInterval(() => {
@@ -32,6 +32,37 @@ export default function LoginScreen() {
     }
     return () => clearInterval(timer);
   }, [countdown]);
+
+  // Premium Keyboard Animation
+  const logoAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        Animated.timing(logoAnim, {
+          toValue: 0,
+          duration: 250,
+          useNativeDriver: false, // Must be false because we animate height/marginBottom
+        }).start();
+      }
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        Animated.timing(logoAnim, {
+          toValue: 1,
+          duration: 250,
+          useNativeDriver: false,
+        }).start();
+      }
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const handleLogin = async () => {
     if (!nim || !password) {
@@ -130,8 +161,27 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.content}>
-        {/* Logo Section */}
-        <View style={styles.logoContainer}>
+        {/* Logo Section with Premium Animation */}
+        <Animated.View style={[
+          styles.logoContainer,
+          {
+            opacity: logoAnim,
+            height: logoAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 170] // 170 is roughly the height of the logo + text
+            }),
+            marginBottom: logoAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 40]
+            }),
+            transform: [{
+              scale: logoAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.6, 1]
+              })
+            }]
+          }
+        ]}>
           <View style={styles.logoCircle}>
             <Image 
               source={require('@/assets/images/icon.png')} 
@@ -141,7 +191,7 @@ export default function LoginScreen() {
           </View>
           <Text style={styles.appName}>Metamedia</Text>
           <Text style={styles.appSubtitle}>Campus Social Platform</Text>
-        </View>
+        </Animated.View>
 
         {/* Form Section */}
         <View style={[styles.formContainer, { backgroundColor: theme.card }]}>

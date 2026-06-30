@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
-  KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Keyboard,
+  Platform, ActivityIndicator, Alert, Keyboard, KeyboardAvoidingView,
   Modal, ScrollView, Image, TouchableWithoutFeedback, StatusBar, UIManager, LayoutAnimation
 } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
-
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Colors } from '@/constants/theme';
@@ -14,7 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { getGroupMessages, sendGroupMessage, sendGroupTypingStatus, deleteGroupMessage, markGroupAsRead, getGroupDetail, toggleGroupMute } from '@/utils/chatMatkul';
 import { markAsRead } from '@/utils/chat';
-import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera, X, Users, BookOpen, BellOff, Bell, Lock, MoreVertical, Download, Plus, FileText, Calendar, User } from 'lucide-react-native';
+import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera, X, Users, BookOpen, BellOff, Bell, Lock, MoreVertical, Download, Plus, FileText, Calendar, User, Type as KeyboardIcon } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -23,7 +23,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
 import SecureMedia from '@/components/SecureMedia';
+import CustomCamera from '@/components/CustomCamera';
+import MediaViewerModal from '@/components/MediaViewerModal';
+import { EmojiKeyboard } from 'rn-emoji-keyboard';
 import { format } from 'date-fns';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const ModalItemSkeleton = ({ theme }: { theme: any }) => {
   const opacity = useSharedValue(0.3);
@@ -51,13 +58,63 @@ export default function GroupChatRoomScreen() {
   const { token, user } = useAuth();
   const { lastEvent, socket } = useSocket();
 
-
-  
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const isSendingRef = useRef(false);
+  const textInputRef = useRef<TextInput>(null);
+  
+  const [isEmojiPickerVisible, setIsEmojiPickerVisible] = useState(false);
+  
+  // Pagination
+  const PAGE_SIZE = 30;
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  
+  // Track OS keyboard height to make Emoji Picker exactly the same height
+  const [keyboardHeight, setKeyboardHeight] = useState(320);
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    return () => showSub.remove();
+  }, []);
+  
+  // WhatsApp-style smooth keyboard controller
+  const { height: keyboardHeightAnim } = useReanimatedKeyboardAnimation();
+  const emojiHeightAnim = useSharedValue(0);
+
+  useEffect(() => {
+    const currentKbHeight = -keyboardHeightAnim.value;
+    if (isEmojiPickerVisible) {
+      if (currentKbHeight > 50) {
+        // Switching from Keyboard to Emoji: Snap instantly to prevent dip
+        emojiHeightAnim.value = keyboardHeight;
+      } else {
+        // Opening Emoji from closed state: Animate up
+        emojiHeightAnim.value = withTiming(keyboardHeight, { duration: 250 });
+      }
+    } else {
+      if (currentKbHeight > 50) {
+        // Switching from Emoji to Keyboard (keyboard is already up): Snap instantly
+        emojiHeightAnim.value = 0;
+      } else {
+        // Closing Emoji to home state: Animate down
+        emojiHeightAnim.value = withTiming(0, { duration: 250 });
+      }
+    }
+  }, [isEmojiPickerVisible, keyboardHeight]);
+
+  // Animated padding on the main container — pushes ALL content up smoothly
+  const animatedContainerStyle = useAnimatedStyle(() => {
+    const kbHeight = -keyboardHeightAnim.value;
+    // Perfect WhatsApp lock: takes the max so the input bar stays completely stationary during swaps
+    return {
+      paddingBottom: Math.max(kbHeight, emojiHeightAnim.value)
+    };
+  });
+
   const [selectedImage, setSelectedImage] = useState<any>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [typingUsers, setTypingUsers] = useState<{[key: string]: string}>({});
@@ -72,7 +129,6 @@ export default function GroupChatRoomScreen() {
   const [groupDetail, setGroupDetail] = useState<any>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   
-  // Syllabus & Assignment Upload State
   const [isSyllabusUploadVisible, setIsSyllabusUploadVisible] = useState(false);
   const [syllabusUploadTitle, setSyllabusUploadTitle] = useState('');
   const [selectedSyllabusFile, setSelectedSyllabusFile] = useState<any>(null);
@@ -93,8 +149,9 @@ export default function GroupChatRoomScreen() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [cachedUri, setCachedUri] = useState<string | null>(null);
 
-  // Group Avatar Upload State
   const [isUploadingGroupAvatar, setIsUploadingGroupAvatar] = useState(false);
+  const [isCameraVisible, setIsCameraVisible] = useState(false);
+  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
 
   const handlePickGroupAvatar = async () => {
     if (!isDosen) return;
@@ -120,7 +177,6 @@ export default function GroupChatRoomScreen() {
           name: `group-avatar.${fileExt}`,
         } as any);
 
-        // [OLD API BACKUP]: const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat-matkul/${id}/avatar`, {
         const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat-matkul/${id}/avatar`, {
           method: 'PATCH',
           headers: {
@@ -147,21 +203,14 @@ export default function GroupChatRoomScreen() {
     }
   };
 
-  // Check if any modal is currently visible to isolate keyboard behavior
   const isAnyModalVisible = isMenuVisible || isDetailVisible || isSyllabusVisible || isAssignmentsVisible || isSyllabusUploadVisible || isAssignmentUploadVisible || isPreviewVisible;
   
-  // Calculate if user is dosen based on group member data or global profile role
   const isDosen = useMemo(() => {
     const myId = user?._id || user?.id;
-    
-    // Check if I am in the admins list
     const isAdmin = groupDetail?.admins?.some((admin: any) => 
       (typeof admin === 'string' ? admin === myId : admin._id === myId)
     );
-    
-    // Fallback to global profile role just in case
     const isGlobalDosen = user?.role?.toLowerCase() === 'dosen' || user?.role?.toLowerCase() === 'admin';
-    
     return isAdmin || isGlobalDosen;
   }, [groupDetail, user]);
   
@@ -169,7 +218,6 @@ export default function GroupChatRoomScreen() {
   const inputAreaRef = useRef<View>(null);
   const typingTimeoutRef = useRef<any>(null);
   const remoteTypingTimeouts = useRef<{[key: string]: any}>({});
-  const remoteTypingTimeoutRef = useRef<any>(null);
 
   const typingStatusText = useMemo(() => {
     const users = Object.values(typingUsers);
@@ -179,7 +227,7 @@ export default function GroupChatRoomScreen() {
     return `${users[0]}, ${users[1]} dan ${users.length - 2} lainnya sedang mengetik...`;
   }, [typingUsers]);
 
-  // Fetch messages
+  // Fetch initial messages with BE Cursor Pagination
   const fetchChatMessages = useCallback(async () => {
     if (!token || !id || id === 'new') {
       setIsLoading(false);
@@ -187,17 +235,16 @@ export default function GroupChatRoomScreen() {
     }
     
     try {
-      const result = await getGroupMessages(id as string, token);
+      const result = await getGroupMessages(id as string, token, PAGE_SIZE);
       if (result.success) {
-        if (result.data.length > 0) {
-          console.log('[Debug Pesan Grup] Status Pesan Pertama:', result.data[0].status, result.data[0].body);
-        }
-        const sorted = result.data.sort((a: any, b: any) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        // Sort oldest → newest (index 0 = oldest), then reverse for FlatList inverted
+        const sorted = result.data.sort((a: any, b: any) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
-        // Ensure no duplicates from backend
-        const unique = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
-        setMessages(unique);
+        const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        
+        setMessages(unique.reverse()); // Reverse for inverted FlatList
+        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -206,58 +253,53 @@ export default function GroupChatRoomScreen() {
     }
   }, [id, token]);
 
+  // Load older messages from BE when scrolled to top
+  const loadMoreMessages = useCallback(async () => {
+    if (isLoadingMore || !hasMore || messages.length === 0) return;
+    setIsLoadingMore(true);
+    
+    // The last item in our inverted list is the oldest message currently rendered
+    const oldestMessageId = messages[messages.length - 1]?._id;
+    
+    try {
+      const result = await getGroupMessages(id as string, token, PAGE_SIZE, oldestMessageId);
+      if (result.success && result.data && result.data.length > 0) {
+        const sorted = result.data.sort((a: any, b: any) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        
+        setMessages(prev => [...prev, ...unique.reverse()]);
+        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+      } else {
+        setHasMore(false);
+      }
+    } catch (error) {
+      console.error('Error loading more messages:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMore, messages, id, token]);
+
   useEffect(() => {
     fetchChatMessages();
-    // Also fetch group detail immediately to know mute status/role
     if (token && id && id !== 'new') {
       getGroupDetail(id as string, token as string).then(result => {
         if (result.success) {
-          console.log('[DEBUG API] Group Detail Response:', JSON.stringify(result.data));
-          console.log('[DEBUG API] Is Muted from Server:', result.data.is_muted);
           setGroupDetail(result.data);
         }
       });
     }
   }, [fetchChatMessages, id, token]);
 
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  useEffect(() => {
-    const showSubscription = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      (e) => setKeyboardHeight(e.endCoordinates.height)
-    );
-    const hideSubscription = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        setKeyboardHeight(0);
-      }
-    );
-
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    // Initial mount logic
-  }, []);
-
   useEffect(() => {
     if (!socket || !id || id === 'new') return;
-
-    // Mark as read when entering the room
     markGroupAsRead(id as string, token as string);
 
     const handleGroupMessage = (data: any) => {
       if (data.community_id === id || data.conversation_id === id) {
         setMessages(prev => {
-          // If already exist by real ID
           if (prev.some(m => m._id === data._id)) return prev;
-          
-          // Smart Reconciliation: Prevent visual double-message glitch
-          // Check if this is my own message that came via socket before HTTP finished
           const isMyMessage = data.sender_id?._id === user?._id || data.sender_id === user?._id;
           if (isMyMessage) {
             const pendingIdx = prev.findIndex(m => 
@@ -267,11 +309,10 @@ export default function GroupChatRoomScreen() {
             );
             if (pendingIdx >= 0) {
               const updated = [...prev];
-              updated[pendingIdx] = data; // Replace pending with the real one
+              updated[pendingIdx] = data;
               return updated;
             }
           }
-          
           return [data, ...prev];
         });
         if (data.sender_id?._id !== user?._id && data.sender_id !== user?._id) {
@@ -288,35 +329,20 @@ export default function GroupChatRoomScreen() {
 
       if (targetId === id && typingUserId !== user?._id) {
         let displayName = typingUser?.nama || typingUser?.name;
-        
-        // Lookup name in members list if not provided in socket payload
         if (!displayName && groupDetail?.members) {
           const member = groupDetail.members.find((m: any) => m._id === typingUserId || m.id === typingUserId);
           if (member) displayName = member.nama || member.name;
         }
-
         const finalName = displayName || 'Seseorang';
-        
         setTypingUsers(prev => ({ ...prev, [typingUserId]: finalName }));
-        
         if (userIsTyping) {
-          if (remoteTypingTimeouts.current[typingUserId]) {
-            clearTimeout(remoteTypingTimeouts.current[typingUserId]);
-          }
+          if (remoteTypingTimeouts.current[typingUserId]) clearTimeout(remoteTypingTimeouts.current[typingUserId]);
           remoteTypingTimeouts.current[typingUserId] = setTimeout(() => {
-            setTypingUsers(prev => {
-              const next = { ...prev };
-              delete next[typingUserId];
-              return next;
-            });
+            setTypingUsers(prev => { const next = { ...prev }; delete next[typingUserId]; return next; });
             delete remoteTypingTimeouts.current[typingUserId];
           }, 4000);
         } else {
-          setTypingUsers(prev => {
-            const next = { ...prev };
-            delete next[typingUserId];
-            return next;
-          });
+          setTypingUsers(prev => { const next = { ...prev }; delete next[typingUserId]; return next; });
           if (remoteTypingTimeouts.current[typingUserId]) {
             clearTimeout(remoteTypingTimeouts.current[typingUserId]);
             delete remoteTypingTimeouts.current[typingUserId];
@@ -328,23 +354,17 @@ export default function GroupChatRoomScreen() {
     const handleStatusUpdate = (data: any) => {
       if (data.conversation_id === id) {
         setMessages(prev => prev.map(msg => {
-          // Only update status if it's a progress (sent -> delivered -> read)
           const statusOrder = { 'pending': 0, 'sent': 1, 'delivered': 2, 'read': 3 };
           const currentWeight = statusOrder[msg.status as keyof typeof statusOrder] || 0;
           const newWeight = statusOrder[data.status as keyof typeof statusOrder] || 0;
-          
-          if (newWeight > currentWeight) {
-            return { ...msg, status: data.status };
-          }
+          if (newWeight > currentWeight) return { ...msg, status: data.status };
           return msg;
         }));
       }
     };
 
     const handleMuteUpdate = (data: any) => {
-      // Data: { groupId: "...", is_muted: true/false }
       if (data.groupId === id || data.conversationId === id) {
-        console.log('[GroupChat] Mute update received:', data.is_muted);
         setGroupDetail((prev: any) => {
           if (!prev) return { is_muted: data.is_muted };
           return { ...prev, is_muted: data.is_muted };
@@ -356,7 +376,7 @@ export default function GroupChatRoomScreen() {
     socket.on('group_typing_status', handleGroupTyping);
     socket.on('typing_status', handleGroupTyping);
     socket.on('message_status_update', handleStatusUpdate);
-    socket.on('group_mute_update', handleMuteUpdate); // Mendengarkan sinyal bungkam
+    socket.on('group_mute_update', handleMuteUpdate);
 
     return () => {
       socket.off('new_message', handleGroupMessage);
@@ -369,15 +389,12 @@ export default function GroupChatRoomScreen() {
 
   const handleTyping = (text: string) => {
     setInputText(text);
-    
     if (id && id !== 'new') {
       if (!isTyping) {
         setIsTyping(true);
         sendGroupTypingStatus(id as string, true, token as string);
       }
-      
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      
       typingTimeoutRef.current = setTimeout(() => {
         setIsTyping(false);
         sendGroupTypingStatus(id as string, false, token as string);
@@ -391,12 +408,10 @@ export default function GroupChatRoomScreen() {
       Alert.alert('Izin Ditolak', 'Dibutuhkan akses ke galeri untuk mengirim gambar.');
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.8,
     });
-
     if (!result.canceled && result.assets && result.assets.length > 0) {
       setSelectedImage(result.assets[0]);
     }
@@ -411,13 +426,12 @@ export default function GroupChatRoomScreen() {
     const currentText = inputText;
     const currentImage = selectedImage;
     
-    // Create optimistic message
     const pendingMsg = {
       _id: tempId,
       body: currentText.trim(),
       sender_id: user?._id,
       createdAt: new Date().toISOString(),
-      status: 'pending', // Special status for clock icon
+      status: 'pending',
       attachments: currentImage ? [{ file_url: currentImage.uri, file_type: 'image' }] : []
     };
 
@@ -425,34 +439,24 @@ export default function GroupChatRoomScreen() {
     setSelectedImage(null);
     setIsSending(true);
 
-    // Optimistically add to list
     setMessages(prev => [pendingMsg, ...prev]);
 
     try {
       const files = currentImage ? [currentImage] : undefined;
-      const params = {
-        token,
-        body: currentText,
-        files,
-        conversationId: id as string
-      };
-
+      const params = { token, body: currentText, files, conversationId: id as string };
       const result = await sendGroupMessage(params);
       
       if (result.success && result.data) {
-        // Replace temp message with real one from server
         setMessages(prev => {
           const filtered = prev.filter(m => m._id !== tempId);
           if (filtered.findIndex(m => m._id === result.data._id) !== -1) return filtered;
           return [result.data, ...filtered];
         });
-        
         if (id === 'new' && result.data.conversation_id) {
           router.setParams({ id: result.data.conversation_id });
         }
       } else {
         Alert.alert('Gagal', result.message || 'Pesan gagal dikirim');
-        // Remove optimistic message if failed
         setMessages(prev => prev.filter(m => m._id !== tempId));
         setInputText(currentText);
         setSelectedImage(currentImage);
@@ -471,7 +475,6 @@ export default function GroupChatRoomScreen() {
   const fetchSyllabus = async () => {
     setIsLoadingSyllabus(true);
     try {
-      // [OLD API BACKUP]: const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/syllabus`, {
       const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/syllabus`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -487,7 +490,6 @@ export default function GroupChatRoomScreen() {
   const fetchAssignments = async () => {
     setIsLoadingAssignments(true);
     try {
-      // [OLD API BACKUP]: const response = await fetch(`https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/assignments`, {
       const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/assignments`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -517,17 +519,13 @@ export default function GroupChatRoomScreen() {
     if (!silent) setIsDownloading(true);
     
     try {
-      // [OLD API BACKUP]: const prodUrl = url.replace('http://localhost:3000', 'https://besosmed-production.up.railway.app');
       const prodUrl = url.replace('http://localhost:3000', 'https://api.metausosmed.my.id');
       const sanitizedFileName = fileName.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
       const fileUri = `${FileSystem.cacheDirectory}${sanitizedFileName}`;
-      
-      // Jika sudah ada di cache, gunakan yang ada
       let finalUri = fileUri;
       const fileInfo = await FileSystem.getInfoAsync(fileUri);
       
       if (!fileInfo.exists) {
-        console.log('[DEBUG] Downloading file to cache:', prodUrl);
         const downloadRes = await FileSystem.downloadAsync(prodUrl, fileUri, {
           headers: { 'Authorization': `Bearer ${token}` },
         });
@@ -540,10 +538,8 @@ export default function GroupChatRoomScreen() {
 
       setCachedUri(finalUri);
 
-      // Jika bukan mode silent, lanjutkan ke proses simpan/buka
       if (!silent) {
         const isImage = fileName.match(/\.(jpg|jpeg|png|gif)$/i);
-        
         if (isImage) {
           try {
             const { status } = await MediaLibrary.requestPermissionsAsync(true);
@@ -563,7 +559,6 @@ export default function GroupChatRoomScreen() {
       return finalUri;
     } catch (error) {
       if (!silent) {
-        console.error('File error:', error);
         Alert.alert('Kesalahan', 'Gagal memproses file.');
       }
       return null;
@@ -572,7 +567,6 @@ export default function GroupChatRoomScreen() {
     }
   };
 
-  // Pre-download when attachment changes
   useEffect(() => {
     if (activeAttachment && isPreviewVisible) {
       setCachedUri(null);
@@ -580,200 +574,22 @@ export default function GroupChatRoomScreen() {
     }
   }, [activeAttachment, isPreviewVisible]);
 
-  const pickDocument = async (type: 'syllabus' | 'assignment') => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
-        copyToCacheDirectory: true,
-      });
-
-      if (!result.canceled) {
-        if (type === 'syllabus') setSelectedSyllabusFile(result.assets[0]);
-        else setSelectedAssignmentFile(result.assets[0]);
-      }
-    } catch (err) {
-      console.error('Pick document error:', err);
-    }
-  };
-
-  const handleUploadSyllabus = async () => {
-    if (!syllabusUploadTitle || !selectedSyllabusFile) {
-      Alert.alert('Peringatan', 'Harap isi judul dan pilih file.');
-      return;
-    }
-
-    setIsUploadingSyllabus(true);
-    const formData = new FormData();
-    formData.append('conversationId', id as string);
-    formData.append('meetingNumber', uploadingMeetingNumber.toString());
-    formData.append('title', syllabusUploadTitle);
-    
-    // @ts-ignore
-    formData.append('file', {
-      uri: selectedSyllabusFile.uri,
-      name: selectedSyllabusFile.name,
-      type: selectedSyllabusFile.mimeType || 'application/octet-stream'
-    });
-
-    try {
-      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/syllabus', {
-      const response = await fetch('https://api.metausosmed.my.id/api/v1/chat/subject/syllabus', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': '*/*',
-        },
-        body: formData,
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        setIsSyllabusUploadVisible(false);
-        setTimeout(() => {
-          Alert.alert('Berhasil', result.message, [
-            { text: 'OK', onPress: () => setIsSyllabusVisible(true) }
-          ]);
-          setSyllabusUploadTitle('');
-          setSelectedSyllabusFile(null);
-          fetchSyllabus(); 
-        }, 300);
-      } else {
-        Alert.alert('Gagal', result.message || 'Gagal mengunggah materi');
-      }
-    } catch (error) {
-      console.error('Upload syllabus error:', error);
-      Alert.alert('Kesalahan', 'Gagal mengunggah materi.');
-    } finally {
-      setIsUploadingSyllabus(false);
-    }
-  };
-
-  const handleCreateAssignment = async () => {
-    if (!assignmentUploadTitle || !assignmentUploadDesc) {
-      Alert.alert('Peringatan', 'Harap isi judul dan deskripsi tugas.');
-      return;
-    }
-
-    setIsCreatingAssignment(true);
-    const formData = new FormData();
-    formData.append('conversationId', id as string);
-    formData.append('title', assignmentUploadTitle);
-    formData.append('description', assignmentUploadDesc);
-    formData.append('dueDate', assignmentDueDate.toISOString());
-    
-    if (selectedAssignmentFile) {
-      // @ts-ignore
-      formData.append('file', {
-        uri: selectedAssignmentFile.uri,
-        name: selectedAssignmentFile.name,
-        type: selectedAssignmentFile.mimeType || 'application/octet-stream'
-      });
-    }
-
-    try {
-      // [OLD API BACKUP]: const response = await fetch('https://besosmed-production.up.railway.app/api/v1/chat/subject/assignments', {
-      const response = await fetch('https://api.metausosmed.my.id/api/v1/chat/subject/assignments', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': '*/*',
-        },
-        body: formData,
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        setIsAssignmentUploadVisible(false); // Tutup modal upload dulu
-        
-        setTimeout(() => {
-          Alert.alert('Berhasil', result.message, [
-            { 
-              text: 'OK', 
-              onPress: () => {
-                setIsAssignmentsVisible(true); // Buka modal list tugas setelah alert ditutup
-                fetchAssignments();
-              }
-            }
-          ]);
-          
-          setAssignmentUploadTitle('');
-          setAssignmentUploadDesc('');
-          setSelectedAssignmentFile(null);
-        }, 300); // Beri nafas untuk transisi modal
-      } else {
-        Alert.alert('Gagal', result.message || 'Gagal membuat tugas');
-      }
-    } catch (error) {
-      console.error('Create assignment error:', error);
-      Alert.alert('Kesalahan', 'Gagal membuat tugas.');
-    } finally {
-      setIsCreatingAssignment(false);
-    }
-  };
-
-  const handleShowDetail = async () => {
-    if (!id || id === 'new') return;
-    setIsDetailVisible(true);
-    setIsLoadingDetail(true);
-    try {
-      const result = await getGroupDetail(id as string, token as string);
-      if (result.success) {
-        if (result.data) {
-          console.log('📦 [GROUP DETAIL DEBUG] Full data:', JSON.stringify(result.data));
-        }
-        setGroupDetail((prev: any) => ({
-          ...result.data,
-          is_muted: prev?.is_muted ?? result.data?.is_muted
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading group detail:', error);
-    } finally {
-      setIsLoadingDetail(false);
-    }
-  };
-
   const handleToggleMute = async () => {
-    console.log('🔊 [MUTE DEBUG] Starting toggle mute for group:', id);
-    if (!id || !groupDetail || !token) {
-      console.log('⚠️ [MUTE DEBUG] Missing requirements:', { id: !!id, groupDetail: !!groupDetail, token: !!token });
-      return;
-    }
+    if (!id || !groupDetail || !token) return;
     const newMuteStatus = !groupDetail.is_muted;
-    console.log('🔄 [MUTE DEBUG] Current mute status:', groupDetail.is_muted, '-> Target status:', newMuteStatus);
-    
     try {
-      // [OLD API BACKUP]: const url = `https://besosmed-production.up.railway.app/api/v1/chat/subject/${id}/mute`;
       const url = `https://api.metausosmed.my.id/api/v1/chat/subject/${id}/mute`;
-      console.log('📡 [MUTE DEBUG] Patching to URL:', url);
-      
       const response = await fetch(url, {
         method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ isMuted: newMuteStatus })
       });
-      
-      console.log('📥 [MUTE DEBUG] Response status:', response.status);
       const result = await response.json();
-      console.log('📦 [MUTE DEBUG] Response body:', JSON.stringify(result));
-      
-      if (response.ok && result.success === undefined) {
-        result.success = true;
-      }
-      
-      if (result.success) {
-        console.log('✅ [MUTE DEBUG] Success! Updating state.');
+      if (result.success || response.ok) {
         setGroupDetail({ ...groupDetail, is_muted: newMuteStatus });
         Alert.alert('Berhasil', newMuteStatus ? 'Grup berhasil di Mute' : 'Grup berhasil di Unmute');
-      } else {
-        console.log('❌ [MUTE DEBUG] Server returned failure:', result.message);
-        Alert.alert('Gagal', result.message || 'Gagal mengubah status grup');
       }
     } catch (error) {
-      console.error('🔥 [MUTE DEBUG] Execution error:', error);
       Alert.alert('Kesalahan', 'Gagal mengubah status bungkaman.');
     }
   };
@@ -790,111 +606,133 @@ export default function GroupChatRoomScreen() {
 
   const handleDeleteMessage = (message: any) => {
     const isMe = message.sender_id?._id === user?._id || message.sender_id === user?._id;
-    
     const options: any[] = [
-      { 
-        text: "Hapus untuk Saya", 
-        style: "destructive",
-        onPress: () => performDeleteMessage(message._id, 'me')
-      },
+      { text: "Hapus untuk Saya", style: "destructive", onPress: () => performDeleteMessage(message._id, 'me') },
       { text: "Batal", style: "cancel" }
     ];
-
     if (isMe) {
-      options.unshift({
-        text: "Hapus untuk Semua",
-        style: "destructive",
-        onPress: () => performDeleteMessage(message._id, 'everyone')
-      });
+      options.unshift({ text: "Hapus untuk Semua", style: "destructive", onPress: () => performDeleteMessage(message._id, 'everyone') });
     }
+    Alert.alert("Hapus Pesan", "Pilih tindakan untuk pesan ini:", options);
+  };
 
-    Alert.alert(
-      "Hapus Pesan",
-      "Pilih tindakan untuk pesan ini:",
-      options
-    );
+  const handleUploadSyllabus = async () => {
+    if (!syllabusUploadTitle.trim()) {
+      Alert.alert('Error', 'Judul silabus tidak boleh kosong.');
+      return;
+    }
+    setIsUploadingSyllabus(true);
+    try {
+      const formData = new FormData();
+      formData.append('title', syllabusUploadTitle.trim());
+      formData.append('meeting_number', String(uploadingMeetingNumber));
+      if (selectedSyllabusFile) {
+        formData.append('file', {
+          uri: selectedSyllabusFile.uri,
+          name: selectedSyllabusFile.name || `syllabus-${Date.now()}.pdf`,
+          type: selectedSyllabusFile.mimeType || 'application/pdf',
+        } as any);
+      }
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/syllabus`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': '*/*',
+        },
+        body: formData,
+      });
+      const result = await response.json();
+      if (response.ok && result.success) {
+        Alert.alert('Berhasil', 'Silabus berhasil diunggah.');
+        setIsSyllabusUploadVisible(false);
+        setSyllabusUploadTitle('');
+        setSelectedSyllabusFile(null);
+        fetchSyllabus();
+      } else {
+        Alert.alert('Gagal', result.message || 'Gagal mengunggah silabus.');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Terjadi kesalahan saat mengunggah silabus.');
+    } finally {
+      setIsUploadingSyllabus(false);
+    }
+  };
+
+  const handleCreateAssignment = async () => {
+    if (!assignmentUploadTitle.trim()) {
+      Alert.alert('Error', 'Judul tugas tidak boleh kosong.');
+      return;
+    }
+    setIsCreatingAssignment(true);
+    try {
+      const formData = new FormData();
+      formData.append('title', assignmentUploadTitle.trim());
+      formData.append('description', assignmentUploadDesc.trim());
+      formData.append('due_date', assignmentDueDate.toISOString());
+      if (selectedAssignmentFile) {
+        formData.append('file', {
+          uri: selectedAssignmentFile.uri,
+          name: selectedAssignmentFile.name || `assignment-${Date.now()}.pdf`,
+          type: selectedAssignmentFile.mimeType || 'application/pdf',
+        } as any);
+      }
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/assignments`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': '*/*',
+        },
+        body: formData,
+      });
+      const result = await response.json();
+      if (response.ok && result.success) {
+        Alert.alert('Berhasil', 'Tugas berhasil dibuat.');
+        setIsAssignmentUploadVisible(false);
+        setAssignmentUploadTitle('');
+        setAssignmentUploadDesc('');
+        setSelectedAssignmentFile(null);
+        fetchAssignments();
+      } else {
+        Alert.alert('Gagal', result.message || 'Gagal membuat tugas.');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Terjadi kesalahan saat membuat tugas.');
+    } finally {
+      setIsCreatingAssignment(false);
+    }
   };
 
   const renderMessage = ({ item }: { item: any }) => {
     const isMe = item.sender_id?._id === user?._id || item.sender_id === user?._id;
     const senderName = item.sender_id?.nama || 'Anggota';
     const time = format(new Date(item.createdAt), 'HH:mm');
-    
     return (
-      <View style={[
-        styles.messageWrapper, 
-        isMe ? styles.messageWrapperRight : styles.messageWrapperLeft
-      ]}>
+      <View style={[styles.messageWrapper, isMe ? styles.messageWrapperRight : styles.messageWrapperLeft]}>
         {!isMe && (
-          <View style={{ paddingLeft: 12, paddingBottom: 4 }}>
-            <Text style={{ color: theme.description, fontSize: 12, fontWeight: '500' }}>
-              {senderName}
-            </Text>
-          </View>
+          <Text style={{ color: theme.description, fontSize: 12, fontWeight: '500', paddingLeft: 12, paddingBottom: 4 }}>
+            {senderName}
+          </Text>
         )}
         <TouchableOpacity 
-          activeOpacity={0.8}
+          activeOpacity={1}
           onLongPress={() => handleDeleteMessage(item)}
-          onPress={() => {
-            if (!isMe) {
-              const uId = item.sender_id?._id || item.sender_id?.id || (typeof item.sender_id === 'string' ? item.sender_id : item.sender_id?.nim);
-              if (uId) {
-                router.push({
-                  pathname: "/user/[id]",
-                  params: { 
-                    id: uId,
-                    initialName: senderName,
-                    initialNim: item.sender_id?.nim || ''
-                  }
-                });
-              } else {
-                Alert.alert('Info', 'Data profil tidak dapat dimuat.');
-              }
-            }
-          }}
-          style={[
-            styles.messageBubble,
-            isMe ? [styles.messageBubbleRight, { backgroundColor: theme.tint }] : [styles.messageBubbleLeft, { backgroundColor: theme.card }]
-          ]}
+          style={[styles.messageBubble, isMe ? [styles.messageBubbleRight, { backgroundColor: theme.tint }] : [styles.messageBubbleLeft, { backgroundColor: theme.card }]]}
         >
           {item.attachments && item.attachments.length > 0 && (
             <View style={styles.attachmentsContainer}>
               {item.attachments.map((att: any, idx: number) => (
-                att.url && (att.url.includes('/api/v1/chat/media') || att.url.includes('/api/v1/chat-matkul/media')) ? (
-                  <SecureMedia 
-                    key={idx} 
-                    url={att.url} 
-                    token={token} 
-                    style={styles.attachmentImage} 
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View key={idx} style={styles.attachmentPlaceholder}>
-                    <Text style={{ color: isMe ? '#FFF' : theme.text }}>Attachment</Text>
-                  </View>
-                )
+                <TouchableOpacity key={idx} activeOpacity={0.85} onPress={() => setViewerUrl(att.url)}>
+                  <SecureMedia url={att.url} token={token} style={styles.attachmentImage} contentFit="cover" />
+                </TouchableOpacity>
               ))}
             </View>
           )}
-          
           {item.body ? (
             <View style={{ position: 'relative' }}>
-              <Text style={[styles.messageText, { color: isMe ? '#FFF' : theme.text }]}>
-                {item.body}
-              </Text>
+              <Text style={[styles.messageText, { color: isMe ? '#FFF' : theme.text }]}>{item.body}</Text>
               <View style={styles.messageInfoAbsolute}>
-                <Text style={[styles.messageTime, { color: isMe ? 'rgba(255,255,255,0.7)' : theme.description }]}>
-                  {time}
-                </Text>
-                {isMe && (
-                  (item.status === 'read' || item.is_read) ? 
-                    <CheckCheck size={14} color="#4FC3F7" style={styles.readIcon} /> : 
-                    item.status === 'delivered' ?
-                    <CheckCheck size={14} color="rgba(255,255,255,0.7)" style={styles.readIcon} /> :
-                    item.status === 'pending' ?
-                    <Clock size={11} color="rgba(255,255,255,0.5)" style={styles.readIcon} /> :
-                    <Check size={14} color="rgba(255,255,255,0.7)" style={styles.readIcon} />
-                )}
+                <Text style={[styles.messageTime, { color: isMe ? 'rgba(255,255,255,0.7)' : theme.description }]}>{time}</Text>
+                {isMe && ((item.status === 'read' || item.is_read) ? <CheckCheck size={14} color="#4FC3F7" /> : <Check size={14} color="rgba(255,255,255,0.7)" />)}
               </View>
             </View>
           ) : null}
@@ -906,60 +744,23 @@ export default function GroupChatRoomScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View 
-        style={[
-          styles.container, 
-          { 
-            backgroundColor: theme.background,
-            paddingBottom: isAnyModalVisible ? 0 : Math.max(0, keyboardHeight)
-          }
-        ]}
-      >
-        <KeyboardAvoidingView 
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-          enabled={!isAnyModalVisible}
-        >
+      <Animated.View style={[styles.container, { backgroundColor: theme.background }, animatedContainerStyle]}>
         <View style={{ flex: 1 }}>
-          <View style={[styles.header, { backgroundColor: theme.card, borderBottomColor: theme.border, elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3 }]}>
+          <View style={[styles.header, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
               <ArrowLeft size={24} color={theme.text} />
             </TouchableOpacity>
-
-            <TouchableOpacity activeOpacity={0.7} onPress={handleShowDetail} style={{ marginLeft: 8, marginRight: 12 }}>
-              {groupDetail?.avatar_url ? (
-                <Image source={{ uri: groupDetail.avatar_url }} style={{ width: 40, height: 40, borderRadius: 20 }} />
-              ) : (
-                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: theme.tint + '20', justifyContent: 'center', alignItems: 'center' }}>
-                  <Users size={20} color={theme.tint} />
-                </View>
-              )}
+            <TouchableOpacity activeOpacity={0.7} onPress={() => setIsDetailVisible(true)} style={{ marginLeft: 8, marginRight: 12 }}>
+              {groupDetail?.avatar_url ? <Image source={{ uri: groupDetail.avatar_url }} style={{ width: 40, height: 40, borderRadius: 20 }} /> : <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: theme.tint + '20', justifyContent: 'center', alignItems: 'center' }}><Users size={20} color={theme.tint} /></View>}
             </TouchableOpacity>
-            
-            <TouchableOpacity 
-              activeOpacity={0.7}
-              onPress={handleShowDetail}
-              style={styles.headerInfo}
-            >
-              <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>
-                {groupName || 'Grup Chat'}
-                {groupDetail?.is_muted && <Text style={{ color: '#D32F2F', fontSize: 14 }}> 🔇</Text>}
-              </Text>
-              <Text style={[styles.headerStatus, { color: typingStatusText ? theme.tint : theme.description }]}>
-                {typingStatusText || 'Klik untuk detail grup'}
-              </Text>
+            <TouchableOpacity activeOpacity={0.7} onPress={() => setIsDetailVisible(true)} style={styles.headerInfo}>
+              <Text style={[styles.headerName, { color: theme.text }]} numberOfLines={1}>{groupName || 'Grup Chat'}{groupDetail?.is_muted && <Text> 🔇</Text>}</Text>
+              <Text style={[styles.headerStatus, { color: typingStatusText ? theme.tint : theme.description }]}>{typingStatusText || 'Klik untuk detail'}</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity 
-              onPress={() => setIsMenuVisible(true)}
-              style={styles.moreButton}
-            >
+            <TouchableOpacity onPress={() => setIsMenuVisible(true)} style={styles.moreButton}>
               <MoreVertical size={24} color={theme.text} />
             </TouchableOpacity>
           </View>
-
-          {/* Messages */}
           <FlatList
             ref={flatListRef}
             data={messages}
@@ -968,55 +769,58 @@ export default function GroupChatRoomScreen() {
             inverted
             contentContainerStyle={styles.messagesList}
             showsVerticalScrollIndicator={false}
+            onEndReached={loadMoreMessages}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={() => (
+              isLoadingMore ? (
+                <View style={{ paddingVertical: 20 }}>
+                  <ActivityIndicator size="small" color={theme.tint} />
+                </View>
+              ) : null
+            )}
           />
         </View>
 
-        {/* Selected Image Preview */}
-        {selectedImage && (
-          <View style={[styles.previewContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
-            <View style={styles.previewImageWrapper}>
-              <SecureMedia url={selectedImage.uri} token={token} style={styles.previewImage} />
-              <TouchableOpacity 
-                style={styles.removePreviewButton}
-                onPress={() => setSelectedImage(null)}
-              >
-                <Text style={styles.removePreviewText}>×</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Input Area */}
         {groupDetail?.is_muted && !isDosen ? (
           <View style={[styles.mutedContainer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
             <Lock size={20} color={theme.description} />
-            <Text style={[styles.mutedText, { color: theme.description }]}>
-              Hanya dosen yang dapat mengirim pesan
-            </Text>
+            <Text style={[styles.mutedText, { color: theme.description }]}>Hanya dosen yang dapat mengirim pesan</Text>
           </View>
         ) : (
-          <View 
-            ref={inputAreaRef}
-            style={[
-              styles.inputContainer, 
-              { 
-                backgroundColor: theme.background, 
-                borderTopColor: theme.border,
-                paddingBottom: Platform.OS === 'ios' ? 25 : (isAnyModalVisible ? 0 : (keyboardHeight > 0 ? 10 : 0))
-              }
-            ]}
-          >
+          <View ref={inputAreaRef} style={[styles.inputContainer, { backgroundColor: theme.background, borderTopColor: theme.border }]}>
             <View style={[styles.inputWrapper, { backgroundColor: theme.card }]}>
-              <TouchableOpacity style={styles.iconButton}>
-                <Smile size={24} color={theme.description} />
+              <TouchableOpacity 
+                style={styles.iconButton} 
+                onPress={() => { 
+                  if (isEmojiPickerVisible) {
+                    // Trick WhatsApp: focus keyboard first, hide emoji picker AFTER keyboard has risen
+                    textInputRef.current?.focus();
+                    setTimeout(() => setIsEmojiPickerVisible(false), 250);
+                  } else {
+                    Keyboard.dismiss(); 
+                    setIsEmojiPickerVisible(true); 
+                  }
+                }}
+              >
+                {isEmojiPickerVisible ? (
+                  <KeyboardIcon size={24} color={theme.description} />
+                ) : (
+                  <Smile size={24} color={theme.description} />
+                )}
               </TouchableOpacity>
               
               <TextInput
+                ref={textInputRef}
                 style={[styles.input, { color: theme.text }]}
                 placeholder="Tulis pesan..."
                 placeholderTextColor={theme.description}
                 value={inputText}
                 onChangeText={handleTyping}
+                onFocus={() => {
+                  if (isEmojiPickerVisible) {
+                    setTimeout(() => setIsEmojiPickerVisible(false), 250);
+                  }
+                }}
                 multiline
                 maxLength={1000}
               />
@@ -1024,7 +828,7 @@ export default function GroupChatRoomScreen() {
               <TouchableOpacity style={styles.iconButton} onPress={handlePickImage}>
                 <Paperclip size={20} color={theme.description} style={{ transform: [{ rotate: '-45deg' }] }} />
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]}>
+              <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]} onPress={() => setIsCameraVisible(true)}>
                 <Camera size={20} color={theme.description} />
               </TouchableOpacity>
             </View>
@@ -1046,6 +850,28 @@ export default function GroupChatRoomScreen() {
           </View>
         )}
 
+        {/* Emoji Picker */}
+        {isEmojiPickerVisible && (
+          <View style={{ position: 'absolute', bottom: 0, height: keyboardHeight, width: '100%', backgroundColor: theme.card, zIndex: 100 }}>
+            <EmojiKeyboard
+              onEmojiSelected={(emojiObject) => {
+                setInputText((prev) => prev + emojiObject.emoji);
+              }}
+              theme={{
+                knob: theme.tint,
+                container: theme.card,
+                header: theme.text,
+                skinTonesContainer: theme.background,
+                category: {
+                  icon: theme.description,
+                  iconActive: theme.tint,
+                  container: theme.background,
+                  containerActive: theme.card,
+                },
+              }}
+            />
+          </View>
+        )}
 
       {/* Action Menu Modal */}
       <Modal
@@ -1131,6 +957,19 @@ export default function GroupChatRoomScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <CustomCamera 
+        visible={isCameraVisible} 
+        onClose={() => setIsCameraVisible(false)} 
+        onCapture={(asset) => setSelectedImage(asset)} 
+      />
+
+      <MediaViewerModal 
+        visible={!!viewerUrl} 
+        url={viewerUrl} 
+        token={token} 
+        onClose={() => setViewerUrl(null)} 
+      />
 
       {/* Group Detail Modal (Floating Card) */}
       <Modal
@@ -1806,8 +1645,7 @@ export default function GroupChatRoomScreen() {
           </View>
         </View>
       </Modal>
-      </KeyboardAvoidingView>
-      </View>
+    </Animated.View>
     </>
   );
 }

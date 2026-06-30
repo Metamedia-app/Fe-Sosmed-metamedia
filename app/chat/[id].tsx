@@ -6,7 +6,6 @@ import {
   TouchableOpacity, 
   ScrollView, 
   TextInput, 
-  KeyboardAvoidingView, 
   Platform, 
   ActivityIndicator,
   Keyboard,
@@ -17,7 +16,8 @@ import {
   Image,
   Modal
 } from 'react-native';
-
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Colors } from '@/constants/theme';
@@ -25,10 +25,17 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { getMessages, sendMessage, sendTypingStatus, deleteMessage, clearConversation, markAsRead } from '@/utils/chat';
-import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera } from 'lucide-react-native';
+import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera, Keyboard as KeyboardIcon } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import SecureMedia from '@/components/SecureMedia';
+import CustomCamera from '@/components/CustomCamera';
+import MediaViewerModal from '@/components/MediaViewerModal';
+import { EmojiKeyboard } from 'rn-emoji-keyboard';
 import { format } from 'date-fns';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 export default function ChatRoomScreen() {
   const { id, recipientId, recipientName, recipientAvatar } = useLocalSearchParams<{ id: string, recipientId: string, recipientName: string, recipientAvatar?: string }>();
@@ -39,6 +46,7 @@ export default function ChatRoomScreen() {
   const { lastEvent, socket } = useSocket();
   const flatListRef = useRef<FlatList>(null);
   const inputAreaRef = useRef<View>(null);
+  const textInputRef = useRef<TextInput>(null);
   
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
@@ -48,11 +56,62 @@ export default function ChatRoomScreen() {
   const [isTyping, setIsTyping] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [isRemoteOnline, setIsRemoteOnline] = useState(false);
+  const [isCameraVisible, setIsCameraVisible] = useState(false);
+  const [isEmojiPickerVisible, setIsEmojiPickerVisible] = useState(false);
+  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   
+  // Pagination
+  const PAGE_SIZE = 30;
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  
+  // Track OS keyboard height to make Emoji Picker exactly the same height
+  const [keyboardHeight, setKeyboardHeight] = useState(320);
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    return () => showSub.remove();
+  }, []);
+  
+  // WhatsApp-style smooth keyboard controller
+  const { height: keyboardHeightAnim } = useReanimatedKeyboardAnimation();
+  const emojiHeightAnim = useSharedValue(0);
+
+  useEffect(() => {
+    const currentKbHeight = -keyboardHeightAnim.value;
+    if (isEmojiPickerVisible) {
+      if (currentKbHeight > 50) {
+        // Switching from Keyboard to Emoji: Snap instantly to prevent dip
+        emojiHeightAnim.value = keyboardHeight;
+      } else {
+        // Opening Emoji from closed state: Animate up
+        emojiHeightAnim.value = withTiming(keyboardHeight, { duration: 250 });
+      }
+    } else {
+      if (currentKbHeight > 50) {
+        // Switching from Emoji to Keyboard (keyboard is already up): Snap instantly
+        emojiHeightAnim.value = 0;
+      } else {
+        // Closing Emoji to home state: Animate down
+        emojiHeightAnim.value = withTiming(0, { duration: 250 });
+      }
+    }
+  }, [isEmojiPickerVisible, keyboardHeight]);
+
+  // Animated padding on the main container — pushes ALL content up smoothly
+  const animatedContainerStyle = useAnimatedStyle(() => {
+    const kbHeight = -keyboardHeightAnim.value;
+    // Perfect WhatsApp lock: takes the max so the input bar stays completely stationary during swaps
+    return {
+      paddingBottom: Math.max(kbHeight, emojiHeightAnim.value)
+    };
+  });
+
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const remoteTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch messages
+  // Fetch initial messages with BE Cursor Pagination
   const fetchChatMessages = useCallback(async () => {
     if (!token || !id || id === 'new') {
       setIsLoading(false);
@@ -60,14 +119,17 @@ export default function ChatRoomScreen() {
     }
     
     try {
-      const result = await getMessages(id as string, token);
+      const result = await getMessages(id as string, token, PAGE_SIZE);
       if (result.success) {
-        const sorted = result.data.sort((a: any, b: any) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        // Sort oldest → newest (index 0 = oldest), then reverse for FlatList inverted
+        const sorted = result.data.sort((a: any, b: any) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
-        // Ensure no duplicates from backend
-        const unique = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
-        setMessages(unique);
+        const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        
+        setMessages(unique.reverse()); // Reverse for inverted FlatList
+        // Fallback: If returned data is exactly PAGE_SIZE, assume there might be more
+        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -76,44 +138,37 @@ export default function ChatRoomScreen() {
     }
   }, [id, token]);
 
+  // Load older messages from BE when scrolled to top
+  const loadMoreMessages = useCallback(async () => {
+    if (isLoadingMore || !hasMore || messages.length === 0) return;
+    setIsLoadingMore(true);
+    
+    // The last item in our inverted list is the oldest message currently rendered
+    const oldestMessageId = messages[messages.length - 1]?._id;
+    
+    try {
+      const result = await getMessages(id as string, token, PAGE_SIZE, oldestMessageId);
+      if (result.success && result.data && result.data.length > 0) {
+        const sorted = result.data.sort((a: any, b: any) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        
+        setMessages(prev => [...prev, ...unique.reverse()]);
+        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+      } else {
+        setHasMore(false);
+      }
+    } catch (error) {
+      console.error('Error loading more messages:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMore, messages, id, token]);
+
   useEffect(() => {
     fetchChatMessages();
   }, [fetchChatMessages, id, token]);
-
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  useEffect(() => {
-    const showSubscription = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      (e) => {
-        LayoutAnimation.configureNext({
-          duration: 300,
-          create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-          update: { type: LayoutAnimation.Types.easeInEaseOut },
-        });
-        setKeyboardHeight(e.endCoordinates.height);
-      }
-    );
-    const hideSubscription = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        LayoutAnimation.configureNext({
-          duration: 250,
-          update: { type: LayoutAnimation.Types.easeInEaseOut },
-        });
-        setKeyboardHeight(0);
-      }
-    );
-
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    // Initial mount logic
-  }, []);
 
   useEffect(() => {
     if (!socket || !id || id === 'new') return;
@@ -205,7 +260,7 @@ export default function ChatRoomScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ['images', 'videos'],
       quality: 0.8,
     });
 
@@ -213,6 +268,8 @@ export default function ChatRoomScreen() {
       setSelectedImage(result.assets[0]);
     }
   };
+
+
 
   const handleSendMessage = async () => {
     if ((!inputText.trim() && !selectedImage) || isSending) return;
@@ -358,21 +415,23 @@ export default function ChatRoomScreen() {
         >
           {item.attachments && item.attachments.length > 0 && (
             <View style={styles.attachmentsContainer}>
-              {item.attachments.map((att: any, idx: number) => (
-                att.url && att.url.includes('/api/v1/chat/media') ? (
-                  <SecureMedia 
-                    key={idx} 
-                    url={att.url} 
-                    token={token} 
-                    style={styles.attachmentImage} 
-                    contentFit="cover"
-                  />
+              {item.attachments.map((att: any, idx: number) => {
+                const mediaUrl = att.url || att.file_url;
+                return mediaUrl ? (
+                  <TouchableOpacity key={idx} activeOpacity={0.85} onPress={() => setViewerUrl(mediaUrl)}>
+                    <SecureMedia 
+                      url={mediaUrl} 
+                      token={token} 
+                      style={styles.attachmentImage} 
+                      contentFit="cover"
+                    />
+                  </TouchableOpacity>
                 ) : (
                   <View key={idx} style={styles.attachmentPlaceholder}>
-                    <Text style={{ color: isMe ? '#FFF' : theme.text }}>Attachment</Text>
+                    <Text style={{ color: isMe ? '#FFF' : theme.text }}>Data Rusak</Text>
                   </View>
-                )
-              ))}
+                );
+              })}
             </View>
           )}
           
@@ -405,20 +464,13 @@ export default function ChatRoomScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View 
+      <Animated.View 
         style={[
           styles.container, 
-          { 
-            backgroundColor: theme.background,
-            paddingBottom: Math.max(0, keyboardHeight)
-          }
+          { backgroundColor: theme.background },
+          animatedContainerStyle,
         ]}
       >
-        <KeyboardAvoidingView 
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-        >
         <View style={{ flex: 1 }}>
           <View style={[styles.header, { backgroundColor: theme.card, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }]}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -473,6 +525,15 @@ export default function ChatRoomScreen() {
             inverted
             contentContainerStyle={styles.messagesList}
             showsVerticalScrollIndicator={false}
+            onEndReached={loadMoreMessages}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={() => (
+              isLoadingMore ? (
+                <View style={{ paddingVertical: 20 }}>
+                  <ActivityIndicator size="small" color={theme.tint} />
+                </View>
+              ) : null
+            )}
           />
         </View>
 
@@ -499,7 +560,7 @@ export default function ChatRoomScreen() {
             { 
               backgroundColor: theme.background, 
               borderTopColor: theme.border,
-              paddingBottom: Platform.OS === 'ios' ? 25 : (keyboardHeight > 0 ? 10 : 0)
+              paddingBottom: Platform.OS === 'ios' ? 25 : 10
             }
           ]}
           onLayout={(event) => {
@@ -508,16 +569,38 @@ export default function ChatRoomScreen() {
           }}
         >
           <View style={[styles.inputWrapper, { backgroundColor: theme.card }]}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Smile size={24} color={theme.description} />
+            <TouchableOpacity 
+              style={styles.iconButton} 
+              onPress={() => { 
+                if (isEmojiPickerVisible) {
+                  // Trick WhatsApp: focus keyboard first, hide emoji picker AFTER keyboard has risen
+                  textInputRef.current?.focus();
+                  setTimeout(() => setIsEmojiPickerVisible(false), 250);
+                } else {
+                  Keyboard.dismiss(); 
+                  setIsEmojiPickerVisible(true); 
+                }
+              }}
+            >
+              {isEmojiPickerVisible ? (
+                <KeyboardIcon size={24} color={theme.description} />
+              ) : (
+                <Smile size={24} color={theme.description} />
+              )}
             </TouchableOpacity>
             
             <TextInput
+              ref={textInputRef}
               style={[styles.input, { color: theme.text }]}
               placeholder="Message"
               placeholderTextColor={theme.description}
               value={inputText}
               onChangeText={handleTyping}
+              onFocus={() => {
+                if (isEmojiPickerVisible) {
+                  setTimeout(() => setIsEmojiPickerVisible(false), 250);
+                }
+              }}
               multiline
               maxLength={1000}
             />
@@ -525,7 +608,7 @@ export default function ChatRoomScreen() {
             <TouchableOpacity style={styles.iconButton} onPress={handlePickImage}>
               <Paperclip size={20} color={theme.description} style={{ transform: [{ rotate: '-45deg' }] }} />
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]}>
+            <TouchableOpacity style={[styles.iconButton, { marginRight: 5 }]} onPress={() => setIsCameraVisible(true)}>
               <Camera size={20} color={theme.description} />
             </TouchableOpacity>
           </View>
@@ -545,8 +628,44 @@ export default function ChatRoomScreen() {
             )}
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
-    </View>
+
+        {/* Emoji Picker */}
+        {isEmojiPickerVisible && (
+          <View style={{ position: 'absolute', bottom: 0, height: keyboardHeight, width: '100%', backgroundColor: theme.card, zIndex: 100 }}>
+            <EmojiKeyboard
+              onEmojiSelected={(emojiObject) => {
+                setInputText((prev) => prev + emojiObject.emoji);
+              }}
+              theme={{
+                knob: theme.tint,
+                container: theme.card,
+                header: theme.text,
+                skinTonesContainer: theme.background,
+                category: {
+                  icon: theme.description,
+                  iconActive: theme.tint,
+                  container: theme.background,
+                  containerActive: theme.card,
+                },
+              }}
+            />
+          </View>
+        )}
+
+      </Animated.View>
+
+      <CustomCamera 
+        visible={isCameraVisible} 
+        onClose={() => setIsCameraVisible(false)} 
+        onCapture={(asset) => setSelectedImage(asset)} 
+      />
+
+      <MediaViewerModal 
+        visible={!!viewerUrl} 
+        url={viewerUrl} 
+        token={token} 
+        onClose={() => setViewerUrl(null)} 
+      />
     </>
   );
 }

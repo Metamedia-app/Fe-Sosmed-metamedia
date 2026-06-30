@@ -1,18 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Settings as SettingsIcon, Bell, Shield, CircleHelp, LogOut, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'expo-router';
-import PasswordChangeModal from '@/components/PasswordChangeModal';
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const { logout } = useAuth();
   const router = useRouter();
-  const [isPasswordModalVisible, setIsPasswordModalVisible] = React.useState(false);
 
   const handleLogout = () => {
     logout();
@@ -44,14 +42,18 @@ export default function SettingsScreen() {
           <SettingItem 
             icon={Shield} 
             title="Ganti Password" 
-            onPress={() => setIsPasswordModalVisible(true)} 
+            onPress={() => router.push('/change-password')} 
           />
         </View>
 
         <View style={[styles.section, { backgroundColor: theme.card }]}>
           <Text style={[styles.sectionTitle, { color: theme.primary }]}>Bantuan</Text>
           <SettingItem icon={CircleHelp} title="Pusat Bantuan" />
-          <SettingItem icon={CircleHelp} title="Tentang Aplikasi" />
+          <SettingItem 
+            icon={CircleHelp} 
+            title="Tentang Aplikasi" 
+            onPress={() => router.push('/about')}
+          />
         </View>
 
       </ScrollView>
@@ -65,11 +67,6 @@ export default function SettingsScreen() {
           <Text style={styles.logoutText}>Keluar dari Akun</Text>
         </TouchableOpacity>
       </View>
-
-      <PasswordChangeModal 
-        visible={isPasswordModalVisible} 
-        onClose={() => setIsPasswordModalVisible(false)} 
-      />
     </View>
   );
 }

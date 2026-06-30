@@ -81,6 +81,7 @@ export const CommentModal = ({
   const [totalComments, setTotalComments] = useState(initialCommentsCount);
   const [isLoading, setIsLoading] = useState(false);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   
   const itemLayouts = useRef<Record<string, number>>({});
   const flashAnim = useRef(new Animated.Value(0)).current;
