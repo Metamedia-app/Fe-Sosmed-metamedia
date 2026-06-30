@@ -375,9 +375,7 @@ export default function UserProfileScreen() {
           {studentData.name}
         </Text>
 
-        <TouchableOpacity style={styles.menuBtn}>
-          <Menu size={24} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={styles.menuBtn} />
       </View>
 
       <View style={[styles.content, { backgroundColor: theme.background }]}>
