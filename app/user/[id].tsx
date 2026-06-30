@@ -1,6 +1,7 @@
 import { PostCard, PostData } from '@/components/PostCard';
 import { PostCardSkeleton } from '@/components/PostCardSkeleton';
 import { PostDetailModal } from '@/components/PostDetailModal';
+import MediaViewerModal from '@/components/MediaViewerModal';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
@@ -51,6 +52,7 @@ export default function UserProfileScreen() {
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [isFetchingDetail, setIsFetchingDetail] = useState(false);
   const [isDMLoading, setIsDMLoading] = useState(false);
+  const [previewAvatarUrl, setPreviewAvatarUrl] = useState<string | null>(null);
 
   // Anti-duplicate & Anti-stale event tracker
   const lastProcessedEventTime = React.useRef<number>(0);
@@ -257,10 +259,6 @@ export default function UserProfileScreen() {
     }
   };
 
-  /**
-   * For repost items: fetch the ORIGINAL post to get accurate counts
-   * and the correct is_reposted flag for the CURRENT logged-in user.
-   */
   const openRepostDetail = async (repostPost: PostData) => {
     const originalId = repostPost.original_post_id?._id;
     if (!originalId || !token) {
@@ -304,7 +302,6 @@ export default function UserProfileScreen() {
     
     if (res.success) {
       setIsFollowing(!isFollowing);
-      // Removed manual setFollowersCount update to prevent duplication with socket event
     } else {
       Alert.alert('Gagal', res.message || 'Terjadi kesalahan');
     }
@@ -313,18 +310,11 @@ export default function UserProfileScreen() {
   const handleDM = async () => {
     if (!id || !token || isDMLoading) return;
     
-    console.log(`=========================================`);
-    console.log(`[DEBUG DM] Membuka chat ke User:`);
-    console.log(`[DEBUG DM] ID: ${id}`);
-    console.log(`[DEBUG DM] Nama: ${studentData?.name || 'Loading...'}`);
-    console.log(`=========================================`);
-
     setIsDMLoading(true);
     const res = await getOrCreateConversation(id, token);
     setIsDMLoading(false);
     
     if (res.success && res.data?.conversation_id) {
-      console.log(`[DEBUG DM] Berhasil! Redirect ke Room ID: ${res.data.conversation_id}`);
       router.push({
         pathname: `/chat/[id]`,
         params: {
@@ -343,7 +333,6 @@ export default function UserProfileScreen() {
     return (
       <View style={[styles.container, { backgroundColor: theme.background }]}>
         <View style={{ paddingTop: 100, paddingHorizontal: 15 }}>
-          {/* Mock profile header skeleton */}
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 30 }}>
             <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: theme.dark ? '#333' : '#E1E9EE', marginRight: 15 }} />
             <View>
@@ -375,7 +364,6 @@ export default function UserProfileScreen() {
   return (
     <View style={[styles.container, { backgroundColor: theme.primary }]}>
       <Stack.Screen options={{ headerShown: false }} />
-      {/* Custom Header Bar */}
       <View style={styles.customHeader}>
         <View style={styles.headerLeft}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -401,18 +389,20 @@ export default function UserProfileScreen() {
             <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={theme.tint} />
           }
         >
-          {/* Header Profile Section */}
           <View style={[styles.profileHeaderLayout, { marginBottom: 15 }]}>
-            <View style={[styles.tiktokAvatarContainer, { borderColor: theme.border }]}>
+            <TouchableOpacity 
+              activeOpacity={0.8}
+              style={[styles.tiktokAvatarContainer, { borderColor: theme.border }]}
+              onLongPress={() => setPreviewAvatarUrl(studentData.avatar)}
+            >
               <Image source={{ uri: studentData.avatar }} style={styles.tiktokAvatar} />
-            </View>
+            </TouchableOpacity>
             <View style={styles.tiktokNameContainer}>
               <Text style={[styles.tiktokNameText, { color: theme.text }]} numberOfLines={1}>{studentData.name}</Text>
               <Text style={[styles.tiktokUsernameText, { color: theme.description }]}>@{studentData.nim}</Text>
             </View>
           </View>
 
-          {/* Action Buttons Row */}
           <View style={{ flexDirection: 'row', paddingHorizontal: 20, gap: 10, marginBottom: 20 }}>
             <TouchableOpacity 
               style={[
@@ -453,7 +443,6 @@ export default function UserProfileScreen() {
             </TouchableOpacity>
           </View>
 
-        {/* Stats Row */}
         <View style={styles.statsRow}>
           <TouchableOpacity 
             style={styles.statBox}
@@ -477,12 +466,10 @@ export default function UserProfileScreen() {
           </View>
         </View>
 
-        {/* Bio Section */}
         <View style={styles.bioContainer}>
           <Text style={[styles.bioText, { color: theme.text }]}>{studentData.bio}</Text>
         </View>
 
-        {/* Info Card (Academic Only) */}
         <View style={[styles.card, { backgroundColor: theme.card }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>Informasi Akademik</Text>
           <View style={styles.infoItem}>
@@ -503,8 +490,6 @@ export default function UserProfileScreen() {
           </View>
         </View>
 
-
-        {/* Tab Header - Sticky Index 5 */}
         <View style={[styles.tabContent, { backgroundColor: theme.card, marginTop: 10 }]}>
           <View style={[styles.tabHeader, { borderBottomColor: theme.border, backgroundColor: theme.card }]}>
             <TouchableOpacity 
@@ -522,7 +507,6 @@ export default function UserProfileScreen() {
           </View>
         </View>
         
-        {/* Feed Content */}
         {isPostsLoading ? (
           <View style={{ paddingTop: 10 }}>
             {[1, 2].map((i) => (
@@ -595,6 +579,13 @@ export default function UserProfileScreen() {
           <ActivityIndicator size="large" color="#FFF" />
         </View>
       )}
+
+      <MediaViewerModal 
+        visible={!!previewAvatarUrl}
+        url={previewAvatarUrl}
+        token={token}
+        onClose={() => setPreviewAvatarUrl(null)}
+      />
     </View>
   );
 }

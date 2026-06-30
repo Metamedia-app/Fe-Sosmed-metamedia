@@ -11,6 +11,7 @@ import { getFollowers, getFollowing } from '@/utils/follow';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { Cake, Calendar, GraduationCap, Layout as ListIcon, Heart, MapPin, Repeat, User as UserIcon, Mail, BadgeCheck } from 'lucide-react-native';
+import MediaViewerModal from '@/components/MediaViewerModal';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
@@ -33,6 +34,7 @@ export default function ProfileScreen() {
   const [posts, setPosts] = useState<PostData[]>([]);
   const [reposts, setReposts] = useState<PostData[]>([]);
   const [isPostsLoading, setIsPostsLoading] = useState(false);
+  const [previewAvatarUrl, setPreviewAvatarUrl] = useState<string | null>(null);
 
 
 
@@ -390,6 +392,7 @@ export default function ProfileScreen() {
         <TouchableOpacity 
           style={[styles.tiktokAvatarContainer, { borderColor: theme.border }]}
           onPress={handleAvatarPress}
+          onLongPress={() => setPreviewAvatarUrl(studentData.avatar)}
           disabled={isAvatarLoading}
         >
           <Image source={{ uri: studentData.avatar }} style={styles.tiktokAvatar} />
@@ -604,6 +607,13 @@ export default function ProfileScreen() {
       <EditProfileModal 
         isVisible={isEditModalVisible} 
         onClose={() => setIsEditModalVisible(false)} 
+      />
+
+      <MediaViewerModal 
+        visible={!!previewAvatarUrl}
+        url={previewAvatarUrl}
+        token={token}
+        onClose={() => setPreviewAvatarUrl(null)}
       />
     </ScrollView>
   );
