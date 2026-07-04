@@ -11,6 +11,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
+import { useChatCache } from '@/context/ChatCacheContext';
 import { communityService, Community, CommunityMessage } from '@/utils/chatCommunity';
 import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, MoreVertical, X, Users, Camera, Trash2, Smile, User, UserPlus, UserMinus, AlertTriangle, Type as KeyboardIcon } from 'lucide-react-native';
 import SecureMedia from '@/components/SecureMedia';
@@ -31,10 +32,12 @@ export default function CommunityChatScreen() {
   const router = useRouter();
   const { token, user } = useAuth();
   const { socket } = useSocket();
+  const { getCache, setCache, appendMessages: appendToCache, prependMessage: prependToCache } = useChatCache();
 
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  // isLoading: hanya true saat tidak ada cache sama sekali
+  const [isLoading, setIsLoading] = useState(() => !getCache(id as string));
   const [isSending, setIsSending] = useState(false);
   const [communityDetail, setCommunityDetail] = useState<Community | null>(null);
   const [isDetailVisible, setIsDetailVisible] = useState(false);
@@ -128,18 +131,30 @@ export default function CommunityChatScreen() {
       setIsLoading(false);
       return;
     }
+
+    // 1. Cek cache — tampilkan secara INSTAN (0ms)
+    const cached = getCache(id as string);
+    if (cached) {
+      setMessages(cached.messages);
+      setHasMore(cached.hasMore);
+      setIsLoading(false);
+    } else {
+      setIsLoading(true);
+    }
     
     try {
       const result = await communityService.getCommunityMessages(token, id as string, PAGE_SIZE);
       if (result.success) {
-        // Sort oldest → newest (index 0 = oldest), then reverse for FlatList inverted
         const sorted = result.data.sort((a: any, b: any) =>
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        const reversed = unique.reverse();
+        const newHasMore = result.meta?.has_more === true;
         
-        setMessages(unique.reverse()); // Reverse for inverted FlatList
-        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+        setMessages(reversed);
+        setHasMore(newHasMore);
+        setCache(id as string, reversed, newHasMore);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -148,12 +163,11 @@ export default function CommunityChatScreen() {
     }
   }, [id, token]);
 
-  // Load older messages from BE when scrolled to top
+  // Load older messages (cursor-based, scroll ke atas)
   const loadMoreMessages = useCallback(async () => {
     if (isLoadingMore || !hasMore || messages.length === 0) return;
     setIsLoadingMore(true);
     
-    // The last item in our inverted list is the oldest message currently rendered
     const oldestMessageId = messages[messages.length - 1]?._id;
     
     try {
@@ -163,11 +177,15 @@ export default function CommunityChatScreen() {
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        const reversed = unique.reverse();
+        const newHasMore = result.meta?.has_more === true;
         
-        setMessages(prev => [...prev, ...unique.reverse()]);
-        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+        setMessages(prev => [...prev, ...reversed]);
+        setHasMore(newHasMore);
+        appendToCache(id as string, reversed, newHasMore);
       } else {
         setHasMore(false);
+        appendToCache(id as string, [], false);
       }
     } catch (error) {
       console.error('Error loading more messages:', error);
@@ -210,12 +228,16 @@ export default function CommunityChatScreen() {
             );
             if (pendingIdx >= 0) {
               const updated = [...prev];
-              updated[pendingIdx] = data; // Replace pending with the real one
+              updated[pendingIdx] = data;
+              // Sync ke cache
+              setCache(id as string, updated, false);
               return updated;
             }
           }
           
-          return [data, ...prev];
+          const updated = [data, ...prev];
+          prependToCache(id as string, data);
+          return updated;
         });
         if (data.sender_id?._id !== user?._id && data.sender_id !== user?._id) {
           communityService.markAsRead(token as string, id as string);
@@ -327,7 +349,7 @@ export default function CommunityChatScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images', 'videos'],
-      quality: 0.8,
+      quality: 0.3,
     });
 
     if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -531,7 +553,7 @@ export default function CommunityChatScreen() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      quality: 0.8,
+      quality: 0.2,
     });
     if (!result.canceled && result.assets && result.assets.length > 0) {
       setEditAvatar(result.assets[0]);
@@ -668,6 +690,10 @@ export default function CommunityChatScreen() {
             showsVerticalScrollIndicator={false}
             onEndReached={loadMoreMessages}
             onEndReachedThreshold={0.5}
+            removeClippedSubviews={Platform.OS === 'android'}
+            initialNumToRender={15}
+            maxToRenderPerBatch={10}
+            windowSize={5}
             ListFooterComponent={() => (
               isLoadingMore ? (
                 <View style={{ paddingVertical: 20 }}>

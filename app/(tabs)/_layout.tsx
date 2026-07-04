@@ -1,4 +1,7 @@
 import { Colors } from '@/constants/theme';
+import GlobalAlert from '@/components/GlobalAlert';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { registerForPushNotificationsAsync, pushNotificationService } from '@/utils/pushNotification';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -55,9 +58,19 @@ export default function TabLayout() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = Colors[colorScheme];
   const router = useRouter();
-  const { isLoggedIn, isLoadingAuth } = useAuth();
+  const { isLoggedIn, isLoadingAuth, token } = useAuth();
   const { unreadChatSummary } = useSocket();
   const [isCreatePostVisible, setIsCreatePostVisible] = useState(false);
+
+  React.useEffect(() => {
+    if (isLoggedIn && token) {
+      registerForPushNotificationsAsync().then(async (fcmToken) => {
+        if (fcmToken) {
+          await pushNotificationService.saveToken(token, fcmToken);
+        }
+      }).catch(console.error);
+    }
+  }, [isLoggedIn, token]);
 
   if (isLoadingAuth) {
     return null; // Wait for AsyncStorage to load before deciding to redirect
@@ -68,7 +81,7 @@ export default function TabLayout() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
       <Tabs
         screenOptions={{
           tabBarActiveTintColor: theme.primary, // Brand Navy

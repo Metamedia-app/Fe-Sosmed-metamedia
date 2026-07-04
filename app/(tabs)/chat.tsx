@@ -1,8 +1,8 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { MessageSquareText, Radio, Search, Users, Check, CheckCheck, Clock, SquarePlus } from 'lucide-react-native';
-import React, { useState, useCallback, useEffect } from 'react';
-import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Alert, ScrollView } from 'react-native';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Alert, ScrollView, TextInput } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
@@ -116,9 +116,46 @@ export default function ChatScreen() {
   const [communities, setCommunities] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreateCommunityVisible, setIsCreateCommunityVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const { token, user } = useAuth();
   const { lastEvent, unreadChatSummary, refreshUnreadChat, socket, onlineUsers } = useSocket();
   const router = useRouter();
+
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    if (query.trim().length === 0) {
+      setSearchResults([]);
+      return;
+    }
+    
+    setIsSearching(true);
+    try {
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/search?q=${encodeURIComponent(query)}`, {
+        headers: {
+          'accept': '*/*',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      if (data.status === 'success' || data.success) {
+        setSearchResults(data.data || []);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Cache lokal — data tersimpan di memory, tab switching INSTAN
+  const cacheRef = useRef<{ inbox: any[]; grup: any[]; community: any[] }>({
+    inbox: [],
+    grup: [],
+    community: [],
+  });
+  const hasFetchedRef = useRef(false); // Pastikan fetch awal hanya sekali
 
   const fetchChats = useCallback(async (silent = false) => {
     if (!token) return;
@@ -133,20 +170,14 @@ export default function ChatScreen() {
       
       const uniqueData: any[] = [];
       const seenUsers = new Set();
-      
       for (const item of sortedData) {
         const userId = item.user?._id || item.user?.id;
-        
-        // ONLY include if it's a personal chat (has a user)
         if (userId && !seenUsers.has(userId)) {
           seenUsers.add(userId);
           uniqueData.push(item);
         }
       }
-      
-      if (uniqueData.length > 0) {
-        console.log('[Debug Inbox Terbaru] Data Pertama:', JSON.stringify(uniqueData[0], null, 2));
-      }
+      cacheRef.current.inbox = uniqueData;
       setConversations(uniqueData);
     }
     if (!silent) setIsLoading(false);
@@ -162,9 +193,7 @@ export default function ChatScreen() {
         const timeB = new Date(b.last_message_at || 0).getTime();
         return timeB - timeA;
       });
-      if (sortedData.length > 0) {
-        console.log('[Debug Grup Terbaru] Data Pertama:', JSON.stringify(sortedData[0], null, 2));
-      }
+      cacheRef.current.grup = sortedData;
       setGroups(sortedData);
     }
     if (!silent) setIsLoading(false);
@@ -175,10 +204,25 @@ export default function ChatScreen() {
     if (!silent) setIsLoading(true);
     const result = await communityService.getMyCommunities(token);
     if (result.success) {
-      setCommunities(result.data || []);
+      const data = result.data || [];
+      cacheRef.current.community = data;
+      setCommunities(data);
     }
     if (!silent) setIsLoading(false);
   }, [token]);
+
+  // Fetch SEMUA tab sekaligus saat pertama kali screen terbuka
+  const fetchAll = useCallback(async (silent = false) => {
+    if (!token) return;
+    if (!silent) setIsLoading(true);
+    // Parallel fetch semua 3 tab
+    await Promise.all([
+      fetchChats(true),
+      fetchGroups(true),
+      fetchCommunities(true),
+    ]);
+    if (!silent) setIsLoading(false);
+  }, [token, fetchChats, fetchGroups, fetchCommunities]);
 
   // Handle incoming real-time messages to bump conversation to top
   useEffect(() => {
@@ -266,17 +310,19 @@ export default function ChatScreen() {
     };
   }, [socket, fetchChats, fetchGroups, user?._id]);
 
+  // Saat tab chat difokus: pertama kali → fetch semua, selanjutnya → silent refresh background
   useFocusEffect(
     useCallback(() => {
-      refreshUnreadChat(); // Sync latest unread summary from API
-      if (activeCategory === 'inbox') {
-        fetchChats();
-      } else if (activeCategory === 'grup') {
-        fetchGroups();
-      } else if (activeCategory === 'community') {
-        fetchCommunities();
+      refreshUnreadChat();
+      if (!hasFetchedRef.current) {
+        // Pertama kali: fetch semua tab sekaligus, tampilkan loading
+        hasFetchedRef.current = true;
+        fetchAll(false);
+      } else {
+        // Kembali ke halaman: silent refresh tanpa loading spinner
+        fetchAll(true);
       }
-    }, [activeCategory, fetchChats, fetchGroups, fetchCommunities, refreshUnreadChat])
+    }, [fetchAll, refreshUnreadChat])
   );
 
   const getActiveData = () => {
@@ -331,10 +377,81 @@ export default function ChatScreen() {
       {/* Search Bar */}
       <View style={[styles.searchBar, { backgroundColor: theme.card, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 }]}>
         <Search size={18} color={theme.description} />
-        <Text style={[styles.searchText, { color: theme.description }]}>Cari pesan atau grup...</Text>
+        <TextInput 
+          style={[styles.searchText, { color: theme.text, flex: 1, padding: 0 }]}
+          placeholder="Cari pesan, grup, atau komunitas..."
+          placeholderTextColor={theme.description}
+          value={searchQuery}
+          onChangeText={handleSearch}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => handleSearch('')}>
+            <Text style={{ color: theme.description, fontSize: 16 }}>✕</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Categories Tabs */}
+      {searchQuery.length > 0 ? (
+        <FlatList
+          data={searchResults}
+          keyExtractor={(item, index) => item.conversation_id || index.toString()}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          ListEmptyComponent={() => (
+            <View style={{ padding: 40, alignItems: 'center' }}>
+              {isSearching ? (
+                <ActivityIndicator color={theme.tint} />
+              ) : (
+                <Text style={{ color: theme.description }}>Tidak ditemukan hasil untuk "{searchQuery}"</Text>
+              )}
+            </View>
+          )}
+          renderItem={({ item }) => {
+            return (
+              <TouchableOpacity 
+                activeOpacity={0.7}
+                style={[styles.chatItem, { backgroundColor: theme.background }]}
+                onPress={() => {
+                  if (item.type === 'inbox') {
+                    router.push(`/chat/${item.conversation_id}?recipientName=${encodeURIComponent(item.name)}&recipientAvatar=${encodeURIComponent(item.avatar_url || '')}`);
+                  } else if (item.type === 'group') {
+                    router.push(`/chat-matkul/${item.conversation_id}?groupName=${encodeURIComponent(item.name)}`);
+                  } else if (item.type === 'community') {
+                    router.push(`/chat-community/${item.conversation_id}?communityName=${encodeURIComponent(item.name)}`);
+                  }
+                }}
+              >
+                <View style={{ position: 'relative' }}>
+                  {item.avatar_url && item.avatar_url.includes('workers.dev') ? (
+                    <Image source={{ uri: item.avatar_url }} style={styles.avatar} />
+                  ) : item.avatar_url ? (
+                    <SecureMedia url={item.avatar_url} token={token} style={styles.avatar} />
+                  ) : (
+                    <View style={[styles.avatar, { justifyContent: 'center', alignItems: 'center', backgroundColor: theme.border }]}>
+                      <Users size={24} color={theme.description} />
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.chatInfo}>
+                  <View style={styles.chatHeader}>
+                    <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>{item.name}</Text>
+                  </View>
+                  <View style={styles.messageRow}>
+                    <Text 
+                      style={[styles.lastMessage, { color: theme.description }]} 
+                      numberOfLines={1}
+                    >
+                      {item.type === 'group' ? 'Grup Matkul' : item.type === 'community' ? 'Komunitas' : (item.subtitle || `Tipe: ${item.type}`)}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
+        />
+      ) : (
+        <>
+          {/* Categories Tabs */}
       <View>
         <ScrollView 
           horizontal 
@@ -342,7 +459,7 @@ export default function ChatScreen() {
           contentContainerStyle={styles.tabsContainer}
         >
           {renderCategoryTab('inbox', 'Inbox', MessageSquareText, unreadChatSummary?.categories?.inbox)}
-          {renderCategoryTab('grup', 'Grup', Users, unreadChatSummary?.categories?.group)}
+          {renderCategoryTab('grup', 'Grup Matkul', Users, unreadChatSummary?.categories?.group)}
           
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             {renderCategoryTab('community', 'Community', Radio, unreadChatSummary?.categories?.community)}
@@ -512,6 +629,8 @@ export default function ChatScreen() {
             );
           }}
         />
+      )}
+      </>
       )}
       
       <CreateCommunityModal 

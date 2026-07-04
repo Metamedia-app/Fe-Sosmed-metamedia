@@ -24,6 +24,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
+import { useChatCache } from '@/context/ChatCacheContext';
 import { getMessages, sendMessage, sendTypingStatus, deleteMessage, clearConversation, markAsRead } from '@/utils/chat';
 import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera, Keyboard as KeyboardIcon } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -44,13 +45,15 @@ export default function ChatRoomScreen() {
   const router = useRouter();
   const { token, user } = useAuth();
   const { lastEvent, socket } = useSocket();
+  const { getCache, setCache, appendMessages: appendToCache, prependMessage: prependToCache, updateMessage: updateInCache, removeMessage: removeFromCache } = useChatCache();
   const flatListRef = useRef<FlatList>(null);
   const inputAreaRef = useRef<View>(null);
   const textInputRef = useRef<TextInput>(null);
   
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  // isLoading: true hanya saat TIDAK ada cache (pertama kali buka chat)
+  const [isLoading, setIsLoading] = useState(() => !getCache(id as string));
   const [isSending, setIsSending] = useState(false);
   const [selectedImage, setSelectedImage] = useState<any>(null);
   const [isTyping, setIsTyping] = useState(false);
@@ -111,25 +114,37 @@ export default function ChatRoomScreen() {
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const remoteTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch initial messages with BE Cursor Pagination
+  // Fetch messages — tampilkan cache dulu (instan), lalu refresh background
   const fetchChatMessages = useCallback(async () => {
     if (!token || !id || id === 'new') {
       setIsLoading(false);
       return;
     }
+
+    // 1. Cek cache — tampilkan data lama secara INSTAN (0ms)
+    const cached = getCache(id as string);
+    if (cached) {
+      setMessages(cached.messages);
+      setHasMore(cached.hasMore);
+      setIsLoading(false);
+      // Lanjut ke background refresh tanpa loading spinner
+    } else {
+      setIsLoading(true);
+    }
     
     try {
       const result = await getMessages(id as string, token, PAGE_SIZE);
       if (result.success) {
-        // Sort oldest → newest (index 0 = oldest), then reverse for FlatList inverted
         const sorted = result.data.sort((a: any, b: any) =>
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        const reversed = unique.reverse();
+        const newHasMore = unique.length >= PAGE_SIZE || result.meta?.has_more === true;
         
-        setMessages(unique.reverse()); // Reverse for inverted FlatList
-        // Fallback: If returned data is exactly PAGE_SIZE, assume there might be more
-        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+        setMessages(reversed);
+        setHasMore(newHasMore);
+        setCache(id as string, reversed, newHasMore);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -138,12 +153,11 @@ export default function ChatRoomScreen() {
     }
   }, [id, token]);
 
-  // Load older messages from BE when scrolled to top
+  // Load older messages (cursor-based, scroll ke atas)
   const loadMoreMessages = useCallback(async () => {
     if (isLoadingMore || !hasMore || messages.length === 0) return;
     setIsLoadingMore(true);
     
-    // The last item in our inverted list is the oldest message currently rendered
     const oldestMessageId = messages[messages.length - 1]?._id;
     
     try {
@@ -153,11 +167,15 @@ export default function ChatRoomScreen() {
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        const reversed = unique.reverse();
+        const newHasMore = result.meta?.has_more === true;
         
-        setMessages(prev => [...prev, ...unique.reverse()]);
-        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+        setMessages(prev => [...prev, ...reversed]);
+        setHasMore(newHasMore);
+        appendToCache(id as string, reversed, newHasMore);
       } else {
         setHasMore(false);
+        appendToCache(id as string, [], false);
       }
     } catch (error) {
       console.error('Error loading more messages:', error);
@@ -181,7 +199,10 @@ export default function ChatRoomScreen() {
         setMessages(prev => {
           const exists = prev.findIndex(m => m._id === data._id) !== -1;
           if (exists) return prev;
-          return [data, ...prev];
+          const updated = [data, ...prev];
+          // Sync ke cache
+          prependToCache(id as string, data);
+          return updated;
         });
       }
     };
@@ -261,7 +282,7 @@ export default function ChatRoomScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images', 'videos'],
-      quality: 0.8,
+      quality: 0.3,
     });
 
     if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -527,6 +548,11 @@ export default function ChatRoomScreen() {
             showsVerticalScrollIndicator={false}
             onEndReached={loadMoreMessages}
             onEndReachedThreshold={0.5}
+            // 🚀 Optimasi Performa agar JS Thread tidak ngelag pas buka/tutup layar
+            removeClippedSubviews={Platform.OS === 'android'}
+            initialNumToRender={15}
+            maxToRenderPerBatch={10}
+            windowSize={5}
             ListFooterComponent={() => (
               isLoadingMore ? (
                 <View style={{ paddingVertical: 20 }}>

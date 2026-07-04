@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 
 import { AuthProvider } from '@/context/AuthContext';
 import { SocketProvider } from '@/context/SocketContext';
+import { ChatCacheProvider } from '@/context/ChatCacheContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { pushNotificationService } from '@/utils/pushNotification';
 import GlobalAlert from '@/components/GlobalAlert';
@@ -141,21 +142,36 @@ export default function RootLayout() {
     <VersionChecker>
       <AuthProvider>
         <SocketProvider>
-          <KeyboardProvider>
-            <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-              <Stack>
-                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                <Stack.Screen name="user/[id]" options={{ headerShown: false }} />
-                <Stack.Screen name="user/[id]/followers" options={{ headerShown: false }} />
-                <Stack.Screen name="user/[id]/following" options={{ headerShown: false }} />
-                <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
-                <Stack.Screen name="settings" options={{ title: 'Pengaturan', headerBackTitle: 'Kembali' }} />
-                <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-              </Stack>
-              <GlobalAlert />
-              <StatusBar style="auto" hidden={Platform.OS === 'android'} />
-            </ThemeProvider>
-          </KeyboardProvider>
+          <ChatCacheProvider>
+            <KeyboardProvider>
+              <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+                <Stack
+                    screenOptions={{
+                      animation: Platform.OS === 'android' ? 'slide_from_right' : 'ios_from_right',
+                      animationDuration: 200,
+                      contentStyle: {
+                        backgroundColor: colorScheme === 'dark' ? '#000' : '#FFF',
+                      },
+                      gestureEnabled: true,
+                      gestureDirection: 'horizontal',
+                      fullScreenGestureEnabled: true,
+                    }}
+                  >
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'none' }} />
+                  <Stack.Screen name="user/[id]" options={{ headerShown: false }} />
+                  <Stack.Screen name="user/[id]/followers" options={{ headerShown: false }} />
+                  <Stack.Screen name="user/[id]/following" options={{ headerShown: false }} />
+                  <Stack.Screen name="chat/[id]" options={{ headerShown: false, presentation: 'transparentModal', animation: 'slide_from_right' }} />
+                  <Stack.Screen name="chat-matkul/[id]" options={{ headerShown: false, presentation: 'transparentModal', animation: 'slide_from_right' }} />
+                  <Stack.Screen name="chat-community/[id]" options={{ headerShown: false, presentation: 'transparentModal', animation: 'slide_from_right' }} />
+                  <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
+                  <Stack.Screen name="settings" options={{ title: 'Pengaturan', headerBackTitle: 'Kembali' }} />
+                </Stack>
+                <GlobalAlert />
+                <StatusBar style="auto" hidden={Platform.OS === 'android'} />
+              </ThemeProvider>
+            </KeyboardProvider>
+          </ChatCacheProvider>
         </SocketProvider>
       </AuthProvider>
     </VersionChecker>

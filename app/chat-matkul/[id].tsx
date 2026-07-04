@@ -14,6 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useSocket } from '@/context/SocketContext';
 import { getGroupMessages, sendGroupMessage, sendGroupTypingStatus, deleteGroupMessage, markGroupAsRead, getGroupDetail, toggleGroupMute } from '@/utils/chatMatkul';
 import { markAsRead } from '@/utils/chat';
+import { useChatCache } from '@/context/ChatCacheContext';
 import { ArrowLeft, Send, Paperclip, Check, CheckCheck, Clock, Trash2, Smile, Camera, X, Users, BookOpen, BellOff, Bell, Lock, MoreVertical, Download, Plus, FileText, Calendar, User, Type as KeyboardIcon } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -57,10 +58,12 @@ export default function GroupChatRoomScreen() {
   const router = useRouter();
   const { token, user } = useAuth();
   const { lastEvent, socket } = useSocket();
+  const { getCache, setCache, appendMessages: appendToCache, prependMessage: prependToCache } = useChatCache();
 
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  // isLoading: hanya true saat tidak ada cache sama sekali
+  const [isLoading, setIsLoading] = useState(() => !getCache(id as string));
   const [isSending, setIsSending] = useState(false);
   const isSendingRef = useRef(false);
   const textInputRef = useRef<TextInput>(null);
@@ -160,7 +163,7 @@ export default function GroupChatRoomScreen() {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: 0.2,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -227,24 +230,36 @@ export default function GroupChatRoomScreen() {
     return `${users[0]}, ${users[1]} dan ${users.length - 2} lainnya sedang mengetik...`;
   }, [typingUsers]);
 
-  // Fetch initial messages with BE Cursor Pagination
+  // Fetch messages — tampilkan cache dulu (instan), lalu refresh di background
   const fetchChatMessages = useCallback(async () => {
     if (!token || !id || id === 'new') {
       setIsLoading(false);
       return;
     }
+
+    // 1. Cek cache — tampilkan secara INSTAN (0ms)
+    const cached = getCache(id as string);
+    if (cached) {
+      setMessages(cached.messages);
+      setHasMore(cached.hasMore);
+      setIsLoading(false);
+    } else {
+      setIsLoading(true);
+    }
     
     try {
       const result = await getGroupMessages(id as string, token, PAGE_SIZE);
       if (result.success) {
-        // Sort oldest → newest (index 0 = oldest), then reverse for FlatList inverted
         const sorted = result.data.sort((a: any, b: any) =>
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        const reversed = unique.reverse();
+        const newHasMore = result.meta?.has_more === true;
         
-        setMessages(unique.reverse()); // Reverse for inverted FlatList
-        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+        setMessages(reversed);
+        setHasMore(newHasMore);
+        setCache(id as string, reversed, newHasMore);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -253,12 +268,11 @@ export default function GroupChatRoomScreen() {
     }
   }, [id, token]);
 
-  // Load older messages from BE when scrolled to top
+  // Load older messages (cursor-based, scroll ke atas)
   const loadMoreMessages = useCallback(async () => {
     if (isLoadingMore || !hasMore || messages.length === 0) return;
     setIsLoadingMore(true);
     
-    // The last item in our inverted list is the oldest message currently rendered
     const oldestMessageId = messages[messages.length - 1]?._id;
     
     try {
@@ -268,11 +282,15 @@ export default function GroupChatRoomScreen() {
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         const unique: any[] = Array.from(new Map(sorted.map((item: any) => [item._id, item])).values());
+        const reversed = unique.reverse();
+        const newHasMore = result.meta?.has_more === true;
         
-        setMessages(prev => [...prev, ...unique.reverse()]);
-        setHasMore(unique.length >= PAGE_SIZE || result.meta?.has_more === true);
+        setMessages(prev => [...prev, ...reversed]);
+        setHasMore(newHasMore);
+        appendToCache(id as string, reversed, newHasMore);
       } else {
         setHasMore(false);
+        appendToCache(id as string, [], false);
       }
     } catch (error) {
       console.error('Error loading more messages:', error);
@@ -410,7 +428,7 @@ export default function GroupChatRoomScreen() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      quality: 0.8,
+      quality: 0.3,
     });
     if (!result.canceled && result.assets && result.assets.length > 0) {
       setSelectedImage(result.assets[0]);
@@ -519,7 +537,9 @@ export default function GroupChatRoomScreen() {
     if (!silent) setIsDownloading(true);
     
     try {
-      const prodUrl = url.replace('http://localhost:3000', 'https://api.metausosmed.my.id');
+      // Perbaiki URL backend jika ada double slash (//) yang bikin download gagal di Android
+      const cleanUrl = url.replace(/([^:]\/)\/+/g, "$1");
+      const prodUrl = cleanUrl.replace('http://localhost:3000', 'https://api.metausosmed.my.id');
       const sanitizedFileName = fileName.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
       const fileUri = `${FileSystem.cacheDirectory}${sanitizedFileName}`;
       let finalUri = fileUri;
@@ -533,6 +553,18 @@ export default function GroupChatRoomScreen() {
           if (!silent) Alert.alert('Gagal', 'File tidak ditemukan di server.');
           return null;
         }
+        
+        // Cek apakah file yang didownload ternyata pesan error HTML/JSON dari server
+        const downloadedInfo = await FileSystem.getInfoAsync(downloadRes.uri);
+        if (downloadedInfo.exists && downloadedInfo.size < 500) {
+          const content = await FileSystem.readAsStringAsync(downloadRes.uri);
+          if (content.includes('<html') || content.includes('{"success":false')) {
+            await FileSystem.deleteAsync(downloadRes.uri, { idempotent: true });
+            if (!silent) Alert.alert('Gagal', 'File corrupt atau tidak ditemukan di server.');
+            return null;
+          }
+        }
+        
         finalUri = downloadRes.uri;
       }
 
@@ -624,16 +656,26 @@ export default function GroupChatRoomScreen() {
     setIsUploadingSyllabus(true);
     try {
       const formData = new FormData();
+      formData.append('conversationId', String(id));
       formData.append('title', syllabusUploadTitle.trim());
-      formData.append('meeting_number', String(uploadingMeetingNumber));
+      formData.append('meetingNumber', String(uploadingMeetingNumber));
       if (selectedSyllabusFile) {
+        let mime = selectedSyllabusFile.mimeType;
+        if (!mime) {
+          const ext = selectedSyllabusFile.name?.split('.').pop()?.toLowerCase();
+          if (ext === 'pdf') mime = 'application/pdf';
+          else if (ext === 'doc' || ext === 'docx') mime = 'application/msword';
+          else if (ext === 'png') mime = 'image/png';
+          else if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+          else mime = 'application/octet-stream';
+        }
         formData.append('file', {
           uri: selectedSyllabusFile.uri,
           name: selectedSyllabusFile.name || `syllabus-${Date.now()}.pdf`,
-          type: selectedSyllabusFile.mimeType || 'application/pdf',
+          type: mime,
         } as any);
       }
-      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/syllabus`, {
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/syllabus`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -666,17 +708,27 @@ export default function GroupChatRoomScreen() {
     setIsCreatingAssignment(true);
     try {
       const formData = new FormData();
+      formData.append('conversationId', String(id));
       formData.append('title', assignmentUploadTitle.trim());
       formData.append('description', assignmentUploadDesc.trim());
-      formData.append('due_date', assignmentDueDate.toISOString());
+      formData.append('dueDate', assignmentDueDate.toISOString());
       if (selectedAssignmentFile) {
+        let mime = selectedAssignmentFile.mimeType;
+        if (!mime) {
+          const ext = selectedAssignmentFile.name?.split('.').pop()?.toLowerCase();
+          if (ext === 'pdf') mime = 'application/pdf';
+          else if (ext === 'doc' || ext === 'docx') mime = 'application/msword';
+          else if (ext === 'png') mime = 'image/png';
+          else if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+          else mime = 'application/octet-stream';
+        }
         formData.append('file', {
           uri: selectedAssignmentFile.uri,
           name: selectedAssignmentFile.name || `assignment-${Date.now()}.pdf`,
-          type: selectedAssignmentFile.mimeType || 'application/pdf',
+          type: mime,
         } as any);
       }
-      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/${id}/assignments`, {
+      const response = await fetch(`https://api.metausosmed.my.id/api/v1/chat/subject/assignments`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -699,6 +751,26 @@ export default function GroupChatRoomScreen() {
       Alert.alert('Error', 'Terjadi kesalahan saat membuat tugas.');
     } finally {
       setIsCreatingAssignment(false);
+    }
+  };
+
+  const pickDocument = async (type: 'syllabus' | 'assignment') => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*', // Allow all files
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        if (type === 'syllabus') {
+          setSelectedSyllabusFile(result.assets[0]);
+        } else {
+          setSelectedAssignmentFile(result.assets[0]);
+        }
+      }
+    } catch (error) {
+      console.error('Error picking document:', error);
+      Alert.alert('Kesalahan', 'Gagal memilih dokumen.');
     }
   };
 
@@ -771,6 +843,10 @@ export default function GroupChatRoomScreen() {
             showsVerticalScrollIndicator={false}
             onEndReached={loadMoreMessages}
             onEndReachedThreshold={0.5}
+            removeClippedSubviews={Platform.OS === 'android'}
+            initialNumToRender={15}
+            maxToRenderPerBatch={10}
+            windowSize={5}
             ListFooterComponent={() => (
               isLoadingMore ? (
                 <View style={{ paddingVertical: 20 }}>
@@ -953,7 +1029,7 @@ export default function GroupChatRoomScreen() {
 
             <TouchableOpacity style={styles.menuItem} onPress={() => {
               setIsMenuVisible(false);
-              handleShowDetail();
+              setIsDetailVisible(true);
             }}>
               <View style={[styles.menuIconContainer, { backgroundColor: '#F3E5F5' }]}>
                 <Users size={18} color="#9C27B0" />
@@ -1088,10 +1164,10 @@ export default function GroupChatRoomScreen() {
                               router.push({
                                 pathname: "/user/[id]",
                                 params: { 
-                                  id: mId,
-                                  initialName: mName,
-                                  initialNim: member.nim || '',
-                                  initialAvatar: avatarUrl || ''
+                                  id: String(mId),
+                                  initialName: String(mName),
+                                  initialNim: member.nim ? String(member.nim) : '',
+                                  initialAvatar: avatarUrl ? String(avatarUrl) : ''
                                 }
                               });
                             }
